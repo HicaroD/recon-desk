@@ -71,15 +71,15 @@ async function createContentScanner(win, doc, api, rules) {
       if (findings.length) {
         phase = "findings-message";
         trace("findings-send", { scanId, count: findings.length });
-        await api.runtime.sendMessage({ type: "findings", findings });
+        await api.runtime.sendMessage({ type: "findings", pageUrl: url, findings });
       }
       phase = "completion-message";
-      await api.runtime.sendMessage({ type: "scan-complete", coverage });
+      await api.runtime.sendMessage({ type: "scan-complete", pageUrl: url, coverage });
       trace("scan-complete", { scanId, count: findings.length, coverage });
     } catch {
       trace("scan-failed", { scanId, phase });
       try {
-        await api.runtime.sendMessage({ type: "scan-error" });
+        await api.runtime.sendMessage({ type: "scan-error", pageUrl: url });
         trace("error-delivered", { scanId });
       } catch {
         trace("error-undelivered", { scanId });
@@ -91,6 +91,11 @@ async function createContentScanner(win, doc, api, rules) {
   api.runtime.onMessage.addListener((message) => {
     if (message?.type === "scan-presence") return Promise.resolve(true);
     if (message?.type === "rescan") return scan("navigation");
+  });
+  // Back/Forward Cache restores this realm without rerunning content scripts or
+  // DOMContentLoaded, but the background has cleared the previous tab's scan.
+  win.addEventListener("pageshow", (event) => {
+    if (event.persisted) void scan("pageshow");
   });
   win.setInterval(() => {
     void scan("interval");

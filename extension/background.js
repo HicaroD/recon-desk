@@ -4,6 +4,7 @@ function createScannerBackground(api, rules) {
   const scriptCounts = new Map();
   const lastPopupState = new Map();
   const injectedPages = new Map();
+  const recoveryAttempts = new Map();
   let logSequence = 0;
   const trace = (event, details = {}) => {
     if (typeof browser !== "undefined")
@@ -100,6 +101,7 @@ function createScannerBackground(api, rules) {
     });
     scriptCounts.delete(id);
     injectedPages.delete(id);
+    recoveryAttempts.delete(id);
     await save(id, {
       url: page(url),
       status: "scanning",
@@ -205,6 +207,23 @@ function createScannerBackground(api, rules) {
         if (!tabMatches) return;
         if (!stateMatches) await reset(tabId, url, "navigation-committed");
       });
+  });
+  api.webNavigation.onDOMContentLoaded.addListener(({ tabId, frameId, url }) => {
+    if (tabId < 0 || frameId !== 0 || !/^https?:/.test(url)) return;
+    return enqueue(tabId, async () => {
+      const tab = await api.tabs.get(tabId);
+      if (page(tab.url) !== page(url)) return;
+      if ((await load(tabId)).url !== page(url))
+        await reset(tabId, url, "document-ready");
+      if (!api.scripting?.executeScript || injectedPages.get(tabId) === page(url)) return;
+      try {
+        if (await api.tabs.sendMessage(tabId, { type: "scan-presence" }) === true)
+          return;
+      } catch {
+        // The declarative content script did not attach to this document.
+      }
+      injectScanner(tabId, url);
+    });
   });
   const rescanOnNavigation = (reason) => ({ tabId, frameId, url }) => {
     if (tabId >= 0 && frameId === 0) {
@@ -386,6 +405,12 @@ function createScannerBackground(api, rules) {
             // A navigation may have started before the content script was attached.
           }
           if (!present) injectScanner(message.tabId, tab.url);
+          else if (recoveryAttempts.get(message.tabId) !== page(tab.url)) {
+            recoveryAttempts.set(message.tabId, page(tab.url));
+            // A content script can be attached even if its original completion
+            // message was missed. Re-scan outside the queue that receives it.
+            void api.tabs.sendMessage(message.tabId, { type: "rescan" }).catch(() => {});
+          }
         }
         const signature = `${matches}:${matches ? state.status : "waiting"}:${matches ? state.findings.length : 0}`;
         if (lastPopupState.get(message.tabId) !== signature) {
@@ -421,10 +446,20 @@ function createScannerBackground(api, rules) {
       sender.frameId !== 0
     )
       return;
+    // Firefox's sender.url remains the original document URL after pushState.
+    // Use the URL captured by the scan, but reject cross-origin claims and
+    // (below) results for routes that are no longer current. Never persist it raw.
+    const url = message.pageUrl ?? sender.url;
+    try {
+      if (typeof url !== "string" || !/^https?:/.test(url) ||
+          new URL(url).origin !== new URL(sender.url).origin) return;
+    } catch {
+      return;
+    }
     return enqueue(sender.tab.id, async () => {
       const tab = await api.tabs.get(sender.tab.id);
-      const tabMatches = page(tab.url) === page(sender.url);
-      const stateMatches = (await load(sender.tab.id)).url === page(sender.url);
+      const tabMatches = page(tab.url) === page(url);
+      const stateMatches = (await load(sender.tab.id)).url === page(url);
       trace("content-message", {
         tabId: sender.tab.id,
         type: message.type,
@@ -436,10 +471,10 @@ function createScannerBackground(api, rules) {
       });
       if (!tabMatches) return;
       if (!stateMatches)
-        await reset(sender.tab.id, sender.url, "content-message");
+        await reset(sender.tab.id, url, "content-message");
       if (message.type === "findings") {
         if (Array.isArray(message.findings))
-          await add(sender.tab.id, sender.url, message.findings);
+          await add(sender.tab.id, url, message.findings);
         trace("findings-accepted", {
           tabId: sender.tab.id,
           total: (await load(sender.tab.id)).findings.length,
@@ -447,7 +482,7 @@ function createScannerBackground(api, rules) {
         return;
       }
       const state = await load(sender.tab.id);
-      if (state.url !== page(sender.url)) return;
+      if (state.url !== page(url)) return;
       const coverage = { ...emptyCoverage(), ...state.coverage };
       if (message.type === "scan-complete") {
         for (const name of ["storage", "inlineScripts", "forms"]) {
@@ -466,7 +501,7 @@ function createScannerBackground(api, rules) {
         findings: state.findings.length,
       });
       if (message.type === "scan-complete")
-        await scanCookies(sender.tab.id, sender.url, tab);
+        await scanCookies(sender.tab.id, url, tab);
     });
   });
   api.tabs.onRemoved.addListener((id) =>
@@ -474,6 +509,7 @@ function createScannerBackground(api, rules) {
       states.delete(id);
       scriptCounts.delete(id);
       injectedPages.delete(id);
+      recoveryAttempts.delete(id);
       lastPopupState.delete(id);
       await api.storage.local.remove(key(id));
     }),

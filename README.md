@@ -48,3 +48,17 @@ npm exec --yes --package web-ext -- web-ext lint --source-dir extension
 ```
 
 The test suite uses Node's built-in test runner and has no runtime dependencies. The extension requests cookie, storage, navigation, request-metadata, HTTP/HTTPS host access, and Firefox response-filter permissions to observe pages automatically.
+
+### Real Firefox navigation regression
+
+With Firefox, Python 3, Selenium 4 (`python3 -m pip install selenium`), and `openssl` available:
+
+```sh
+python3 tests/firefox_smoke.py
+# If Firefox is not discoverable, for example on macOS:
+python3 tests/firefox_smoke.py --firefox /Applications/Firefox.app/Contents/MacOS/firefox
+```
+
+This launches an isolated Firefox profile, temporarily installs a copy of the extension, and serves local HTTP and self-signed HTTPS fixtures. Selenium Manager resolves geckodriver. It checks initial navigation, cached Back/Forward, reload, SPA and fragment navigation, and clearing the badge on a clean page. It reads persisted state and the real toolbar badge without opening the popup or sending a scan request. Completion must occur within five seconds, before the 30-second sampling interval can mask a failure. The Back/Forward cases assert that Firefox actually restored the cached document.
+
+Two Firefox lifecycle details matter: cached documents resume through `pageshow` (`persisted: true`), without rerunning content scripts or `DOMContentLoaded`; and message `sender.url` can remain the original document URL after a same-document navigation. The scanner rescans restored documents and includes its captured page URL in messages, which the background validates against the sender origin and current tab. That raw URL is not persisted. Cached restores do not replay network observations, so header/external-script coverage can remain `not inspected`.

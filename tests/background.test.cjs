@@ -24,6 +24,7 @@ function fakeBrowser() {
     webNavigation: {
       onBeforeNavigate: event(),
       onCommitted: event(),
+      onDOMContentLoaded: event(),
       onHistoryStateUpdated: event(),
       onReferenceFragmentUpdated: event(),
     },
@@ -90,6 +91,31 @@ test("badge counts deduplicated findings and resets when leaving the site", asyn
     url: "https://other.example.test/next",
   });
   assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
+});
+
+test("Firefox keeps sender.url at the original document URL after SPA navigation", async () => {
+  const api = fakeBrowser();
+  const original = "https://app.example.test/start";
+  let url = original;
+  api.tabs.get = async (id) => ({ id, url });
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  url = "https://app.example.test/next#section";
+  await api.webNavigation.onHistoryStateUpdated.emit({ tabId: 7, frameId: 0, url });
+  const sender = { tab: { id: 7 }, frameId: 0, url: original };
+  const findings = rules.analyzeStorage("localStorage", [{ key: "auth_token", value: "fixture-token-123" }], url);
+  await api.runtime.onMessage.emit({ type: "findings", pageUrl: url, findings }, sender);
+  await api.runtime.onMessage.emit({ type: "scan-complete", pageUrl: url }, sender);
+  assert.equal(api.data.get("tab:7").status, "complete");
+  assert.equal(api.data.get("tab:7").findings[0].pagePath, "/next");
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "1" });
+
+  // A delayed scan for the old route must not overwrite the new result.
+  await api.runtime.onMessage.emit({ type: "scan-error", pageUrl: original }, sender);
+  assert.equal(api.data.get("tab:7").status, "complete");
+  // A document from another origin cannot claim the current route.
+  await api.runtime.onMessage.emit({ type: "scan-error", pageUrl: url }, { ...sender, url: "https://other.test/" });
+  assert.equal(api.data.get("tab:7").status, "complete");
 });
 
 test("findings and coverage clear on the next page of the same site", async () => {
@@ -556,6 +582,91 @@ test("popup polling does not reinject when a page scanner is already attached", 
     { type: "get-scan-state", tabId: 7 }, {},
   );
   assert.equal(state.status, "scanning");
+  assert.equal(injections, 0);
+});
+
+test("opening the popup retries an attached scanner whose navigation scan never finished", async () => {
+  const api = fakeBrowser();
+  const url = "https://app.example.test/";
+  const finding = rules.analyzeStorage(
+    "localStorage", [{ key: "auth_token", value: "secret-value-123" }], url,
+  )[0];
+  let finished;
+  const scanFinished = new Promise((resolve) => { finished = resolve; });
+  let retries = 0;
+  api.tabs.sendMessage = async (id, message) => {
+    if (message.type === "scan-presence") return true;
+    if (message.type === "rescan") {
+      retries++;
+      await api.runtime.onMessage.emit(
+        { type: "findings", findings: [finding] },
+        { tab: { id }, url, frameId: 0 },
+      );
+      await api.runtime.onMessage.emit(
+        { type: "scan-complete", coverage: { storage: "checked" } },
+        { tab: { id }, url, frameId: 0 },
+      );
+      finished();
+    }
+  };
+  api.scripting = { executeScript: async () => { throw Error("should not inject"); } };
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  const state = async () => (
+    await api.runtime.onMessage.emit({ type: "get-scan-state", tabId: 7 }, {})
+  )[0];
+  assert.equal((await state()).status, "scanning");
+  await Promise.race([
+    scanFinished,
+    new Promise((_, reject) => setTimeout(() => reject(Error("scan stalled")), 100)),
+  ]);
+  assert.equal((await state()).status, "complete");
+  assert.deepEqual((await state()).findings.map((item) => item.ruleId), ["storage-sensitive"]);
+  assert.equal(retries, 1);
+});
+
+test("navigation finishes a scan and updates the badge before opening the popup", async () => {
+  const api = fakeBrowser();
+  const url = "https://app.example.test/";
+  const finding = rules.analyzeStorage(
+    "localStorage", [{ key: "auth_token", value: "secret-value-123" }], url,
+  )[0];
+  api.tabs.sendMessage = async () => { throw Error("no receiver"); };
+  let completed;
+  const scanFinished = new Promise((resolve) => { completed = resolve; });
+  api.scripting = {
+    executeScript: async () => {
+      await api.runtime.onMessage.emit(
+        { type: "findings", findings: [finding] },
+        { tab: { id: 7 }, url, frameId: 0 },
+      );
+      await api.runtime.onMessage.emit(
+        { type: "scan-complete", coverage: { storage: "checked" } },
+        { tab: { id: 7 }, url, frameId: 0 },
+      );
+      completed();
+    },
+  };
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await api.webNavigation.onDOMContentLoaded.emit({ tabId: 7, frameId: 0, url });
+  await Promise.race([
+    scanFinished,
+    new Promise((_, reject) => setTimeout(() => reject(Error("scan did not start")), 100)),
+  ]);
+  assert.equal(api.data.get("tab:7").status, "complete");
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "1" });
+});
+
+test("navigation does not inject another scanner when the declarative script is present", async () => {
+  const api = fakeBrowser();
+  api.tabs.sendMessage = async () => true;
+  let injections = 0;
+  api.scripting = { executeScript: async () => { injections++; } };
+  createScannerBackground(api, rules);
+  const url = "https://app.example.test/";
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await api.webNavigation.onDOMContentLoaded.emit({ tabId: 7, frameId: 0, url });
   assert.equal(injections, 0);
 });
 

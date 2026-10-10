@@ -14,6 +14,7 @@ test("page scan reports only redacted findings from storage and inline scripts",
     },
     sessionStorage: { length: 0 },
     setInterval: () => {},
+    addEventListener() {},
   };
   const doc = {
     querySelectorAll: (selector) =>
@@ -53,6 +54,7 @@ test("blocked localStorage does not prevent sessionStorage scanning", async () =
       getItem: () => "very-secret-token-123",
     },
     setInterval: () => {},
+    addEventListener() {},
   };
   const doc = { querySelectorAll: () => [] };
   const api = {
@@ -75,6 +77,7 @@ test("an empty page reports completion rather than leaving the popup loading", a
     localStorage: { length: 0 },
     sessionStorage: { length: 0 },
     setInterval: () => {},
+    addEventListener() {},
   };
   const doc = { querySelectorAll: () => [] };
   const api = {
@@ -104,6 +107,7 @@ test("blocked storage is shown as partial scan coverage", async () => {
     },
     sessionStorage: { length: 0 },
     setInterval: () => {},
+    addEventListener() {},
   };
   const doc = { querySelectorAll: () => [] };
   const api = {
@@ -127,6 +131,7 @@ test("storage values skipped for size are marked as partial coverage", async () 
     },
     sessionStorage: { length: 0 },
     setInterval: () => {},
+    addEventListener() {},
   };
   const doc = { querySelectorAll: () => [] };
   const api = {
@@ -150,6 +155,7 @@ test("page scan flags a password form submitted over HTTP without retaining its 
     localStorage: { length: 0 },
     sessionStorage: { length: 0 },
     setInterval: () => {},
+    addEventListener() {},
   };
   const form = {
     action: "http://login.example.test/private/submit?password=hidden",
@@ -181,6 +187,7 @@ test("Next.js hydration is identified from its script element", async () => {
     localStorage: { length: 0 },
     sessionStorage: { length: 0 },
     setInterval: () => {},
+    addEventListener() {},
   };
   const script = {
     id: "__NEXT_DATA__",
@@ -212,6 +219,7 @@ test("a failed page scan reports an error without sending exception details", as
     localStorage: { length: 0 },
     sessionStorage: { length: 0 },
     setInterval: () => {},
+    addEventListener() {},
   };
   const doc = {
     querySelectorAll: () => {
@@ -225,7 +233,7 @@ test("a failed page scan reports an error without sending exception details", as
     },
   };
   await createContentScanner(win, doc, api, rules);
-  assert.deepEqual(messages, [{ type: "scan-error" }]);
+  assert.deepEqual(messages, [{ type: "scan-error", pageUrl: win.location.href }]);
 });
 
 test("the popup can detect an attached scanner without starting another scan", async () => {
@@ -236,6 +244,7 @@ test("the popup can detect an attached scanner without starting another scan", a
       location: { href: "https://app.example.test/" },
       localStorage: { length: 0 }, sessionStorage: { length: 0 },
       setInterval: () => {},
+      addEventListener() {},
     },
     { querySelectorAll: () => [] },
     { runtime: {
@@ -246,4 +255,25 @@ test("the popup can detect an attached scanner without starting another scan", a
   );
   assert.equal(await onMessage({ type: "scan-presence" }), true);
   assert.deepEqual(messages.map((message) => message.type), ["scan-complete"]);
+});
+
+test("findings and completion retain the URL captured before a route changes", async () => {
+  const pageUrl = "https://app.example.test/first?access_token=fixture-token-123";
+  const win = {
+    location: { href: pageUrl },
+    localStorage: { length: 0 }, sessionStorage: { length: 0 },
+    setInterval() {}, addEventListener() {},
+  };
+  const messages = [];
+  await createContentScanner(win, { querySelectorAll: () => [] }, {
+    runtime: {
+      onMessage: { addListener() {} },
+      sendMessage: async (message) => {
+        messages.push(message);
+        win.location.href = "https://app.example.test/second";
+      },
+    },
+  }, rules);
+  assert.deepEqual(messages.map((m) => m.type), ["findings", "scan-complete"]);
+  assert.deepEqual(messages.map((m) => m.pageUrl), [pageUrl, pageUrl]);
 });
