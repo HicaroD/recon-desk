@@ -13,11 +13,7 @@ function createScannerBackground(api, rules) {
   });
   const page = (url) => {
     try {
-      const parsed = new URL(url);
-      let hash = 2166136261;
-      for (const char of parsed.pathname)
-        hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
-      return `${parsed.origin}#${(hash >>> 0).toString(16)}`;
+      return new URL(url).origin;
     } catch {
       return "";
     }
@@ -64,12 +60,14 @@ function createScannerBackground(api, rules) {
   }
 
   async function reset(id, url) {
-    scriptCounts.delete(id);
+    const state = await load(id);
+    const sameSite = state.url === page(url);
+    if (!sameSite) scriptCounts.delete(id);
     await save(id, {
       url: page(url),
       status: "scanning",
-      findings: [],
-      coverage: emptyCoverage(),
+      findings: sameSite ? state.findings : [],
+      coverage: sameSite ? state.coverage : emptyCoverage(),
     });
   }
 

@@ -60,7 +60,7 @@ function fakeBrowser() {
   };
 }
 
-test("badge counts deduplicated findings and resets on navigation", async () => {
+test("badge counts deduplicated findings and resets when leaving the site", async () => {
   const api = fakeBrowser();
   createScannerBackground(api, rules);
   const finding = rules.analyzeStorage(
@@ -85,8 +85,44 @@ test("badge counts deduplicated findings and resets on navigation", async () => 
   await api.webNavigation.onBeforeNavigate.emit({
     tabId: 7,
     frameId: 0,
-    url: "https://app.example.test/next",
+    url: "https://other.example.test/next",
   });
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
+});
+
+test("findings accumulate across a site's pages and clear when leaving the site", async () => {
+  const api = fakeBrowser();
+  let url = "https://app.example.test/first";
+  api.tabs.get = async (id) => ({ id, url });
+  createScannerBackground(api, rules);
+  const first = rules.analyzeStorage(
+    "localStorage",
+    [{ key: "auth_token", value: "secret-value-123" }],
+    url,
+  )[0];
+  const sender = () => ({ tab: { id: 7 }, url, frameId: 0 });
+  const state = async () =>
+    (await api.runtime.onMessage.emit({ type: "get-scan-state", tabId: 7 }, {}))[0];
+
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await api.runtime.onMessage.emit({ type: "findings", findings: [first] }, sender());
+  url = "https://app.example.test/second";
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  assert.deepEqual((await state()).findings.map((item) => item.ruleId), ["storage-sensitive"]);
+  assert.equal((await state()).status, "scanning");
+
+  const second = rules.analyzePasswordForm("http://login.example.test/", url, "Login form")[0];
+  await api.runtime.onMessage.emit({ type: "findings", findings: [second] }, sender());
+  await api.runtime.onMessage.emit({ type: "scan-complete", coverage: {} }, sender());
+  assert.deepEqual((await state()).findings.map((item) => item.ruleId), [
+    "storage-sensitive",
+    "password-form-http",
+  ]);
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "2" });
+
+  url = "https://elsewhere.example.test/";
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  assert.deepEqual((await state()).findings, []);
   assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
 });
 
