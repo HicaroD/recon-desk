@@ -187,6 +187,14 @@ test("popup explains checked and skipped sources without calling them findings",
     /External scripts: not inspected/,
   );
   assert.match(elements.coverage.textContent, /Storage: partial/);
+  assert.match(
+    elements.coverage.textContent,
+    /Checked means sampled, not exhaustive/,
+  );
+  assert.match(
+    elements.status.textContent,
+    /does not rule out vulnerabilities/,
+  );
 });
 
 test("an old background response directs the user to reload the add-on", async () => {

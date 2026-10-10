@@ -7,7 +7,15 @@ const explanations = {
     "This session-like cookie is not restricted to HTTPS requests.",
   "header-csp":
     "No enforced CSP was seen on the document response. This is a defense-in-depth lead.",
+  "header-csp-unsafe-inline":
+    "The observed CSP permits inline scripts without a nonce or hash. Review whether this is necessary.",
+  "header-csp-wildcard-script":
+    "The observed CSP allows scripts from any source. Review whether script origins can be restricted.",
+  "header-csp-no-script-restriction":
+    "The observed CSP does not restrict script sources. Other directives may still provide protection.",
   "header-hsts": "No HSTS header was seen on the HTTPS document response.",
+  "header-hsts-disabled":
+    "The observed HSTS header has no valid positive max-age, so it does not enable HSTS protection.",
   "supabase-secret":
     "A server-only Supabase key appears in content available to browser code.",
   "private-key":
@@ -99,7 +107,7 @@ async function showPopup(api, doc) {
                 "not inspected",
               ),
             )
-            .join(" · ")}`
+            .join(" · ")} · Checked means sampled, not exhaustive.`
         : "";
     }
     if (result.status === "waiting" || result.status === "scanning") {
@@ -123,7 +131,7 @@ async function showPopup(api, doc) {
         : "No findings";
       status.textContent = findings.length
         ? "Review these passive signals before reporting."
-        : "The page scan finished without matching any current checks.";
+        : "No matching signals in the sampled checks. This does not rule out vulnerabilities.";
     }
     if (!findings.length) {
       const empty = doc.createElement("p");

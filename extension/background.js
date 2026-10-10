@@ -119,6 +119,24 @@ function createScannerBackground(api, rules) {
     if (next.findings.length !== state.findings.length) await save(id, next);
   }
 
+  async function scanCookies(id, url, tab) {
+    if ((await load(id)).url !== page(url)) return;
+    try {
+      const activeTab = tab || (await api.tabs.get(id));
+      const details = { url };
+      if (activeTab.cookieStoreId) details.storeId = activeTab.cookieStoreId;
+      const cookies = await api.cookies.getAll(details);
+      await add(
+        id,
+        url,
+        cookies.flatMap((cookie) => rules.analyzeCookie(cookie, url)),
+      );
+      await markCoverage(id, url, "cookies", "checked");
+    } catch {
+      await markCoverage(id, url, "cookies", "partial");
+    }
+  }
+
   api.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId, url }) => {
     if (tabId >= 0 && frameId === 0)
       return enqueue(tabId, () => reset(tabId, url));
@@ -167,19 +185,7 @@ function createScannerBackground(api, rules) {
       )
         return;
       return enqueue(details.tabId, async () => {
-        try {
-          const cookies = await api.cookies.getAll({ url: details.url });
-          await add(
-            details.tabId,
-            details.url,
-            cookies.flatMap((cookie) =>
-              rules.analyzeCookie(cookie, details.url),
-            ),
-          );
-          await markCoverage(details.tabId, details.url, "cookies", "checked");
-        } catch {
-          await markCoverage(details.tabId, details.url, "cookies", "partial");
-        }
+        await scanCookies(details.tabId, details.url);
       });
     },
     { urls: ["<all_urls>"], types: ["main_frame"] },
@@ -289,10 +295,12 @@ function createScannerBackground(api, rules) {
         const state = await load(message.tabId);
         if (!state.url || state.url !== page(tab.url))
           return { status: "waiting", findings: [], coverage: emptyCoverage() };
+        await scanCookies(message.tabId, tab.url, tab);
+        const current = await load(message.tabId);
         return {
-          status: state.status || "waiting",
-          findings: state.findings,
-          coverage: { ...emptyCoverage(), ...state.coverage },
+          status: current.status || "waiting",
+          findings: current.findings,
+          coverage: { ...emptyCoverage(), ...current.coverage },
         };
       });
     }
@@ -331,6 +339,8 @@ function createScannerBackground(api, rules) {
         coverage,
         status: message.type === "scan-error" ? "error" : "complete",
       });
+      if (message.type === "scan-complete")
+        await scanCookies(sender.tab.id, sender.url, tab);
     });
   });
   api.tabs.onRemoved.addListener((id) =>

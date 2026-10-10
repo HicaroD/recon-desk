@@ -31,12 +31,12 @@ For each finding's detection method and significance, see [FINDINGS.md](FINDINGS
 - Session-like cookies lacking `HttpOnly` or `Secure` (cookie values are never stored).
 - Token-like values in `localStorage` or `sessionStorage`, and exposed `sb_secret_` Supabase keys.
 - Supabase secret keys, legacy service-role JWT claims, Firebase service-account credentials, or PEM private keys in browser storage and inline or observed external JavaScript. JWT claims are not proof that a token is valid.
-- Missing enforced CSP or HSTS on main-document responses, reported as low-confidence review leads.
+- Missing or ineffective CSP/HSTS on main-document responses, reported as low-confidence review leads.
 - Sensitive query parameters in the page URL and observed subrequest URLs, and OAuth tokens in page URL fragments, without retaining their values.
 - Password forms submitting over HTTP and direct assignments of URL query/fragment content to HTML sinks (a heuristic review lead, not confirmed XSS).
 - Nonempty Next.js `serverRuntimeConfig` in `__NEXT_DATA__` and long auth tokens in Next.js or React-style initial state.
 
-The popup shows severity, confidence, the affected origin, redacted evidence, and scan coverage by source. `Partial` means a source was blocked or exceeded a scan limit; `not inspected` means there was no observation. URL paths, queries, cookie values, storage values, and script bodies are not saved in findings. Findings are deduplicated per tab, cleared on navigation, and stored locally so Firefox's background event page can resume. Public Supabase publishable/anon keys and Firebase web API keys are not vulnerabilities by themselves. No active checks of database rules or backend access are made.
+The popup shows severity, confidence, the affected origin, redacted evidence, and scan coverage by source. `Checked` means sampled, not exhaustive; `partial` means a source was blocked or exceeded a scan limit; `not inspected` means there was no observation. URL paths, queries, cookie values, storage values, and script bodies are not saved in findings. Findings are deduplicated per tab, cleared on navigation, and stored locally so Firefox's background event page can resume. Public Supabase publishable/anon keys and Firebase web API keys are not vulnerabilities by themselves. No active checks of database rules or backend access are made.
 
 Firefox's response filter observes up to 20 external script responses per tab and scans at most 256 KiB of each. The filter forwards the original response bytes to the page, without fetching scripts again or storing their bodies. The extension needs Firefox's `webRequestBlocking` and `webRequestFilterResponse` permissions for this. It does not confirm XSS, enumerate Firebase/Supabase access policies, scan unopened search results, or run on Firefox's protected/internal pages. Storage and inline script sampling are also bounded; missed findings and false positives are possible.
 

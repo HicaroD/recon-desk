@@ -75,6 +75,120 @@ test("a document without CSP or HSTS is a review lead, not a confirmed exploit",
   );
 });
 
+test("CSP with unrestricted inline scripts is a review lead but nonce-based scripts are not", () => {
+  const base = [
+    { name: "Strict-Transport-Security", value: "max-age=31536000" },
+  ];
+  const unsafe = rules.analyzeHeaders(
+    [
+      ...base,
+      {
+        name: "Content-Security-Policy",
+        value: "default-src 'self'; script-src 'self' 'unsafe-inline'",
+      },
+    ],
+    "https://app.example.test/",
+  );
+  assert.deepEqual(
+    unsafe.map((item) => item.ruleId),
+    ["header-csp-unsafe-inline"],
+  );
+  assert.equal(unsafe[0].confidence, "potential");
+  const nonce = rules.analyzeHeaders(
+    [
+      ...base,
+      {
+        name: "Content-Security-Policy",
+        value: "script-src 'unsafe-inline' 'nonce-random123'",
+      },
+    ],
+    "https://app.example.test/",
+  );
+  assert.deepEqual(nonce, []);
+});
+
+test("wildcard script sources are reviewed only when no other CSP restricts them", () => {
+  const hsts = { name: "Strict-Transport-Security", value: "max-age=31536000" };
+  const broad = {
+    name: "Content-Security-Policy",
+    value: "default-src *; img-src 'self'",
+  };
+  const restrictive = {
+    name: "Content-Security-Policy",
+    value: "script-src 'self'",
+  };
+  assert.deepEqual(
+    rules
+      .analyzeHeaders([hsts, broad], "https://app.example.test/")
+      .map((item) => item.ruleId),
+    ["header-csp-wildcard-script"],
+  );
+  assert.deepEqual(
+    rules.analyzeHeaders(
+      [hsts, broad, restrictive],
+      "https://app.example.test/",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    rules.analyzeHeaders(
+      [
+        hsts,
+        {
+          name: "Content-Security-Policy",
+          value: "default-src *; script-src 'self'",
+        },
+      ],
+      "https://app.example.test/",
+    ),
+    [],
+  );
+});
+
+test("a CSP limited to unrelated resources does not imply script protection", () => {
+  const hsts = { name: "Strict-Transport-Security", value: "max-age=31536000" };
+  const policy = (value) => ({ name: "Content-Security-Policy", value });
+  const ruleIds = (items) =>
+    rules
+      .analyzeHeaders([hsts, ...items], "https://app.example.test/")
+      .map((item) => item.ruleId);
+  assert.deepEqual(ruleIds([policy("img-src 'self'")]), [
+    "header-csp-no-script-restriction",
+  ]);
+  assert.deepEqual(ruleIds([policy("")]), ["header-csp-no-script-restriction"]);
+  assert.deepEqual(
+    ruleIds([policy("img-src 'self'"), policy("default-src 'none'")]),
+    [],
+  );
+  assert.deepEqual(
+    ruleIds([policy("img-src 'self'"), policy("script-src *")]),
+    ["header-csp-wildcard-script"],
+  );
+  assert.deepEqual(ruleIds([policy("sandbox")]), []);
+  assert.deepEqual(
+    ruleIds([policy("script-src 'nonce-example' 'strict-dynamic' *")]),
+    [],
+  );
+});
+
+test("HSTS with zero or invalid max-age is not treated as protection", () => {
+  const csp = { name: "Content-Security-Policy", value: "default-src 'self'" };
+  const check = (value) =>
+    rules
+      .analyzeHeaders(
+        [csp, { name: "Strict-Transport-Security", value }],
+        "https://app.example.test/",
+      )
+      .map((item) => item.ruleId);
+  assert.deepEqual(check("max-age=0; includeSubDomains"), [
+    "header-hsts-disabled",
+  ]);
+  assert.deepEqual(check('max-age="0"'), ["header-hsts-disabled"]);
+  assert.deepEqual(check("max-age=abc"), ["header-hsts-disabled"]);
+  assert.deepEqual(check("includeSubDomains"), ["header-hsts-disabled"]);
+  assert.deepEqual(check("max-age=31536000; includeSubDomains"), []);
+});
+
 test("inline script identifies server-only Supabase credentials but ignores public keys", () => {
   const script =
     'const publicKey = "sb_publishable_123456789012"; const admin = "sb_secret_123456789012";';
@@ -171,6 +285,51 @@ test("ordinary author metadata is ignored while camel-case access tokens are fla
   );
   assert.equal(findings.length, 1);
   assert.equal(findings[0].evidence, "localStorage key: accessToken");
+});
+
+test("standalone and segmented token storage keys are reported without their values", () => {
+  const findings = rules.analyzeStorage(
+    "localStorage",
+    [
+      { key: "token", value: "private-token-value-123" },
+      { key: "user_token", value: "another-private-token-123" },
+      { key: "tokenizer", value: "harmless-public-setting" },
+    ],
+    "https://app.example.test/",
+  );
+  assert.deepEqual(
+    findings.map((item) => item.ruleId),
+    ["storage-sensitive", "storage-sensitive"],
+  );
+  assert.ok(!JSON.stringify(findings).includes("private-token-value-123"));
+});
+
+test("common session cookie names without token or session are reviewed", () => {
+  for (const name of [
+    "sid",
+    "connect.sid",
+    "JSESSIONID",
+    "PHPSESSID",
+    "ASP.NET_SessionId",
+  ]) {
+    assert.deepEqual(
+      rules
+        .analyzeCookie(
+          { name, httpOnly: false, secure: true },
+          "https://app.example.test/",
+        )
+        .map((item) => item.ruleId),
+      ["cookie-httponly"],
+      name,
+    );
+  }
+  assert.deepEqual(
+    rules.analyzeCookie(
+      { name: "visitor_id", httpOnly: false, secure: true },
+      "https://app.example.test/",
+    ),
+    [],
+  );
 });
 
 test("server-side Supabase key in browser storage is a high-severity exposure", () => {

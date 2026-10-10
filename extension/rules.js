@@ -96,7 +96,7 @@ function analyzeStorage(area, entries, url) {
     )
       return [];
     if (
-      !/(?:^|[_.:-])(?:auth|access|refresh|session|bearer|jwt|secret|password|private)(?:$|[_.:-])/.test(
+      !/(?:^|[_.:-])(?:auth|access|refresh|session|bearer|jwt|token|secret|password|private)(?:$|[_.:-])/.test(
         normalized,
       )
     )
@@ -115,7 +115,12 @@ function analyzeStorage(area, entries, url) {
 }
 
 function analyzeCookie(cookie, url) {
-  if (!/(?:session|auth|access|refresh|token|jwt)/i.test(cookie.name || ""))
+  if (
+    !/(?:session|auth|access|refresh|token|jwt)/i.test(cookie.name || "") &&
+    !/^(?:sid|connect\.sid|jsessionid|phpsessid|asp\.net_sessionid)$/i.test(
+      cookie.name || "",
+    )
+  )
     return [];
   const evidence = `Cookie: ${safeName(cookie.name)}`;
   const results = [];
@@ -165,6 +170,118 @@ function analyzeHeaders(headers, url) {
         "Main document response",
       ),
     );
+  const hsts = headers.filter(
+    (header) => header.name.toLowerCase() === "strict-transport-security",
+  );
+  if (
+    url.startsWith("https:") &&
+    hsts.length &&
+    hsts.every((header) => {
+      if (typeof header.value !== "string") return false;
+      const age = header.value.match(
+        /(?:^|;)\s*max-age\s*=\s*"?(\d+)"?\s*(?:;|$)/i,
+      );
+      return (
+        !age || !Number.isSafeInteger(Number(age[1])) || Number(age[1]) === 0
+      );
+    })
+  ) {
+    results.push(
+      finding(
+        "header-hsts-disabled",
+        "low",
+        "HSTS header does not enable protection",
+        url,
+        "Main document response",
+      ),
+    );
+  }
+  const policies = headers
+    .filter(
+      (header) =>
+        header.name.toLowerCase() === "content-security-policy" &&
+        typeof header.value === "string",
+    )
+    .map((header) => {
+      const directives = new Map(
+        header.value.split(";").map((part) => {
+          const [name, ...sources] = part.trim().split(/\s+/);
+          return [name.toLowerCase(), sources];
+        }),
+      );
+      return {
+        sources:
+          directives.get("script-src") || directives.get("default-src") || null,
+        sandboxBlocksScripts:
+          directives.has("sandbox") &&
+          !directives.get("sandbox").includes("allow-scripts"),
+      };
+    });
+  if (
+    policies.some(({ sources }) => sources?.includes("'unsafe-inline'")) &&
+    policies.every(({ sources, sandboxBlocksScripts }) => {
+      return (
+        !sandboxBlocksScripts &&
+        (sources === null ||
+          (sources.includes("'unsafe-inline'") &&
+            !sources.some((source) =>
+              /^'(?:nonce-|sha(?:256|384|512)-)/.test(source),
+            )))
+      );
+    })
+  ) {
+    results.push(
+      finding(
+        "header-csp-unsafe-inline",
+        "low",
+        "CSP permits unrestricted inline scripts",
+        url,
+        "Main document response",
+      ),
+    );
+  }
+  if (
+    policies.some(({ sources }) => sources?.includes("*")) &&
+    policies.every(
+      ({ sources, sandboxBlocksScripts }) =>
+        !sandboxBlocksScripts &&
+        (sources === null ||
+          (sources.includes("*") &&
+            !(
+              sources.includes("'strict-dynamic'") &&
+              sources.some((source) =>
+                /^'(?:nonce-|sha(?:256|384|512)-)/.test(source),
+              )
+            ))),
+    )
+  ) {
+    results.push(
+      finding(
+        "header-csp-wildcard-script",
+        "low",
+        "CSP permits scripts from any source",
+        url,
+        "Main document response",
+      ),
+    );
+  }
+  if (
+    policies.length &&
+    policies.every(
+      ({ sources, sandboxBlocksScripts }) =>
+        sources === null && !sandboxBlocksScripts,
+    )
+  ) {
+    results.push(
+      finding(
+        "header-csp-no-script-restriction",
+        "low",
+        "CSP does not restrict script sources",
+        url,
+        "Main document response",
+      ),
+    );
+  }
   return results;
 }
 

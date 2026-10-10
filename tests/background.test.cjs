@@ -130,6 +130,64 @@ test("response headers, completed cookies, and subrequest URLs contribute to the
   assert.ok(!JSON.stringify(api.data).includes("secret-value-123"));
 });
 
+test("token cookie created after load is found when the popup asks for state", async () => {
+  const api = fakeBrowser();
+  let cookies = [];
+  api.cookies.getAll = async () => cookies;
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({
+    tabId: 7,
+    frameId: 0,
+    url: "https://app.example.test/",
+  });
+  await api.webRequest.onCompleted.emit({
+    tabId: 7,
+    type: "main_frame",
+    url: "https://app.example.test/",
+  });
+  cookies = [{ name: "token", httpOnly: false, secure: true }];
+  const [state] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 },
+    {},
+  );
+  assert.deepEqual(
+    state.findings.map((item) => item.ruleId),
+    ["cookie-httponly"],
+  );
+});
+
+test("cookie lookup uses the active tab container", async () => {
+  const api = fakeBrowser();
+  api.tabs.get = async (id) => ({
+    id,
+    url: "https://app.example.test/",
+    cookieStoreId: "firefox-container-3",
+  });
+  api.cookies.getAll = async (details) =>
+    details.storeId === "firefox-container-3"
+      ? [{ name: "token", httpOnly: false, secure: true }]
+      : [];
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({
+    tabId: 7,
+    frameId: 0,
+    url: "https://app.example.test/",
+  });
+  await api.webRequest.onCompleted.emit({
+    tabId: 7,
+    type: "main_frame",
+    url: "https://app.example.test/",
+  });
+  const [state] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 },
+    {},
+  );
+  assert.deepEqual(
+    state.findings.map((item) => item.ruleId),
+    ["cookie-httponly"],
+  );
+});
+
 test("tab state never stores raw path tokens", async () => {
   const api = fakeBrowser();
   createScannerBackground(api, rules);
