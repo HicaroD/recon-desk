@@ -145,6 +145,25 @@ test("wildcard script sources are reviewed only when no other CSP restricts them
   );
 });
 
+test("Firefox's combined CSP header enforces each policy in the list", () => {
+  const headers = (value) => [
+    { name: "Strict-Transport-Security", value: "max-age=31536000" },
+    { name: "Content-Security-Policy", value },
+  ];
+  for (const policy of [
+    "script-src * 'unsafe-inline', script-src 'self'",
+    "script-src 'self', script-src * 'unsafe-inline'",
+    "img-src 'self', default-src 'none'",
+  ]) {
+    assert.deepEqual(rules.analyzeHeaders(headers(policy), "https://app.example.test/"), []);
+  }
+  assert.deepEqual(
+    rules.analyzeHeaders(headers("img-src 'self', script-src *"), "https://app.example.test/")
+      .map((item) => item.ruleId),
+    ["header-csp-wildcard-script"],
+  );
+});
+
 test("a CSP limited to unrelated resources does not imply script protection", () => {
   const hsts = { name: "Strict-Transport-Security", value: "max-age=31536000" };
   const policy = (value) => ({ name: "Content-Security-Policy", value });

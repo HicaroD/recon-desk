@@ -8,6 +8,7 @@ import argparse
 import http.server
 import json
 import pathlib
+import re
 import shutil
 import ssl
 import subprocess
@@ -18,15 +19,30 @@ import time
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
+from firefox_fixtures import CASES, REDACTED_VALUES, response
 
 
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        fixture = response(self.path)
+        if fixture is not None:
+            body, headers = fixture
+            self.send_response(200)
+            for name, value in headers:
+                self.send_header(name, value)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         clean = self.path.startswith('/clean')
+        script = self.path.startswith('/external.js')
         body = b'<!doctype html><title>Clean</title>' if clean else b'''<!doctype html>
-          <title>Scan fixture</title><script>const key = "sb_secret_fixture12345678";</script>'''
+          <title>Scan fixture</title><script>const key = "sb_secret_fixture12345678";</script>
+          <script src="/external.js"></script>'''
+        if script:
+            body = b'const externalKey = "sb_secret_external12345678";'
         self.send_response(200)
-        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Type', 'application/javascript' if script else 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Strict-Transport-Security', 'max-age=31536000')
         if clean:
@@ -38,7 +54,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def check(driver, diagnostic, target, expected_url, label, clean=False):
+def check(driver, diagnostic, target, expected_url, label, clean=False, network=True, detection=None):
     fingerprint = 2166136261
     for char in expected_url:
         fingerprint = ((fingerprint ^ ord(char)) * 16777619) & 0xffffffff
@@ -47,6 +63,7 @@ def check(driver, diagnostic, target, expected_url, label, clean=False):
     driver.switch_to.window(diagnostic)
     started = time.monotonic()
     result = None
+    actual = set()
     while time.monotonic() - started < 5:  # Never let the 30s interval hide failure.
         result = driver.execute_async_script('''const url = arguments[0], done = arguments[1];
           (async () => {
@@ -60,7 +77,21 @@ def check(driver, diagnostic, target, expected_url, label, clean=False):
             findings = result['state']['findings']
             expected_badge = str(min(99, len(findings))) if findings else ''
             has_inline = any(f['ruleId'] == 'supabase-secret' for f in findings)
-            if result['badge'] == expected_badge and (not findings if clean else has_inline):
+            coverage = result['state'].get('coverage', {})
+            network_ready = not network or (coverage.get('headers') == 'checked'
+                and (clean or coverage.get('externalScripts') == 'checked'))
+            findings_ready = not findings if clean else has_inline
+            if detection is not None:
+                actual = {(f['ruleId'], f['evidence']) for f in findings}
+                findings_ready = actual == detection['expected']
+                network_ready = all(coverage.get(source) == 'checked' for source in [
+                    'headers', 'cookies', 'storage', 'inlineScripts', 'forms',
+                ]) and coverage.get('externalScripts') == (
+                    'checked' if 'external' in detection else 'not-inspected')
+                serialized = json.dumps(result['state'])
+                for value in REDACTED_VALUES:
+                    assert value not in serialized, f'{label}: persisted an unredacted fixture value'
+            if network_ready and result['badge'] == expected_badge and findings_ready:
                 driver.switch_to.window(target)
                 driver.set_context('chrome')
                 try:
@@ -76,9 +107,10 @@ def check(driver, diagnostic, target, expected_url, label, clean=False):
                     driver.set_context('content')
                 print(f'PASS {label}: toolbar badge={badge!r}, complete, '
                       f'{time.monotonic() - started:.2f}s', flush=True)
-                return
+                return {f['ruleId'] for f in findings}
         time.sleep(0.05)
-    raise AssertionError(f'{label}: no automatic completion/badge within 5s: {result}')
+    missing = detection['expected'] - actual if detection is not None and result else None
+    raise AssertionError(f'{label}: no expected findings/coverage/badge within 5s; missing={missing}: {result}')
 
 
 def main():
@@ -87,6 +119,12 @@ def main():
     parser.add_argument('--extension-dir', type=pathlib.Path,
                         default=pathlib.Path(__file__).resolve().parents[1] / 'extension')
     args = parser.parse_args()
+    implemented_rules = set(re.findall(r'finding\(\s*"([a-z-]+)"',
+                                       (args.extension_dir / 'rules.js').read_text()))
+    expected_rules = {rule for item in CASES for rule, _ in item['expected']}
+    assert implemented_rules == expected_rules, (
+        f'Update Firefox fixtures: uncovered rules={implemented_rules - expected_rules}, '
+        f'unknown expectations={expected_rules - implemented_rules}')
     with tempfile.TemporaryDirectory(prefix='client-watcher-firefox-') as temporary:
         root = pathlib.Path(temporary)
         extension = root / 'extension'
@@ -140,10 +178,10 @@ def main():
                 driver.execute_script('window.restored = false; addEventListener("pageshow", e => { window.restored = e.persisted; });')
                 driver.back()
                 assert driver.execute_script('return window.restored') is True, 'Back did not exercise BFCache'
-                check(driver, diagnostic, target, a, scheme + ' cached Back')
+                check(driver, diagnostic, target, a, scheme + ' cached Back', network=False)
                 driver.forward()
                 assert driver.execute_script('return window.restored') is True, 'Forward did not exercise BFCache'
-                check(driver, diagnostic, target, b, scheme + ' cached Forward')
+                check(driver, diagnostic, target, b, scheme + ' cached Forward', network=False)
                 driver.refresh()
                 check(driver, diagnostic, target, b, scheme + ' reload')
                 driver.execute_script('history.pushState({}, "", "/spa")')
@@ -152,6 +190,17 @@ def main():
                 check(driver, diagnostic, target, base + '/spa#route', scheme + ' fragment navigation')
                 driver.get(base + '/clean')
                 check(driver, diagnostic, target, base + '/clean', scheme + ' clears old badge', clean=True)
+            observed_rules = set()
+            for item in CASES:
+                scheme = item.get('scheme', 'https')
+                server = servers[0 if scheme == 'http' else 1]
+                url = (f'{scheme}://127.0.0.1:{server.server_port}/detections/{item["name"]}/'
+                       + item.get('suffix', ''))
+                driver.get(url)
+                observed_rules.update(check(driver, diagnostic, target, url,
+                                            'detection ' + item['name'], detection=item))
+            assert observed_rules == implemented_rules
+            print(f'PASS all {len(implemented_rules)} detection rules across {len(CASES)} isolated cases', flush=True)
         finally:
             if driver:
                 driver.quit()

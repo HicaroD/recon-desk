@@ -5,6 +5,7 @@ function createScannerBackground(api, rules) {
   const lastPopupState = new Map();
   const injectedPages = new Map();
   const recoveryAttempts = new Map();
+  const pendingHeaders = new Map();
   let logSequence = 0;
   const trace = (event, details = {}) => {
     if (typeof browser !== "undefined")
@@ -48,6 +49,12 @@ function createScannerBackground(api, rules) {
       return "/";
     }
   };
+  const responsePage = (url) => page(url.split("#")[0]);
+
+  async function applyHeaders(id, url, observation) {
+    await add(id, url, observation.findings, true);
+    await markCoverage(id, url, "headers", observation.coverage);
+  }
 
   function enqueue(id, work) {
     const next = (queues.get(id) || Promise.resolve())
@@ -90,7 +97,7 @@ function createScannerBackground(api, rules) {
     });
   }
 
-  async function reset(id, url, reason) {
+  async function reset(id, url, reason, sameDocument = false) {
     const previous = await load(id);
     trace("reset", {
       tabId: id,
@@ -99,14 +106,24 @@ function createScannerBackground(api, rules) {
       previousStatus: previous.status,
       previousFindings: previous.findings.length,
     });
-    scriptCounts.delete(id);
+    if (!sameDocument) scriptCounts.delete(id);
     injectedPages.delete(id);
     recoveryAttempts.delete(id);
     await save(id, {
       url: page(url),
+      document: sameDocument ? (previous.document || 1) : (previous.document || 0) + 1,
       status: "scanning",
-      findings: [],
-      coverage: emptyCoverage(),
+      findings: sameDocument
+        ? previous.findings.filter((item) => item.documentScoped)
+            .map((item) => ({ ...item, pagePath: pagePath(url) }))
+        : [],
+      coverage: {
+        ...emptyCoverage(),
+        ...(sameDocument ? {
+          headers: previous.coverage?.headers || "not-inspected",
+          externalScripts: previous.coverage?.externalScripts || "not-inspected",
+        } : {}),
+      },
     });
   }
 
@@ -122,11 +139,14 @@ function createScannerBackground(api, rules) {
   }
 
   async function markScriptCoverage(id, owner, value) {
-    const url = await owner;
-    if (url) await markCoverage(id, url, "externalScripts", value);
+    const document = await owner;
+    const state = await load(id);
+    if (!document || state.document !== document) return;
+    const tab = await api.tabs.get(id);
+    await markCoverage(id, tab.url, "externalScripts", value);
   }
 
-  async function add(id, url, findings) {
+  async function add(id, url, findings, documentScoped = false) {
     const state = await load(id);
     if (state.url && state.url !== page(url)) return;
     const next = {
@@ -150,7 +170,7 @@ function createScannerBackground(api, rules) {
         continue;
       const identity = `${item.ruleId}:${item.url}:${path}:${item.evidence}`;
       if (!seen.has(identity) && next.findings.length < 100) {
-        next.findings.push({ ...item, pagePath: path });
+        next.findings.push({ ...item, pagePath: path, ...(documentScoped ? { documentScoped: true } : {}) });
         seen.add(identity);
       }
     }
@@ -206,6 +226,13 @@ function createScannerBackground(api, rules) {
         trace("navigation-committed", { tabId, tabMatches, stateMatches });
         if (!tabMatches) return;
         if (!stateMatches) await reset(tabId, url, "navigation-committed");
+        // Firefox may deliver response headers before onBeforeNavigate. Replay
+        // that observation after the navigation reset, against the committed URL
+        // (which may include a fragment absent from the HTTP request).
+        const headers = pendingHeaders.get(tabId);
+        pendingHeaders.delete(tabId);
+        if (headers?.url === responsePage(url))
+          await applyHeaders(tabId, url, headers);
       });
   });
   api.webNavigation.onDOMContentLoaded.addListener(({ tabId, frameId, url }) => {
@@ -228,7 +255,7 @@ function createScannerBackground(api, rules) {
   const rescanOnNavigation = (reason) => ({ tabId, frameId, url }) => {
     if (tabId >= 0 && frameId === 0) {
       trace("navigation-same-document", { tabId, reason });
-      return enqueue(tabId, () => reset(tabId, url, reason)).then(() => {
+      return enqueue(tabId, () => reset(tabId, url, reason, true)).then(() => {
         void api.tabs.sendMessage(tabId, { type: "rescan" }).then(
           () => trace("rescan-delivered", { tabId, reason }),
           () => trace("rescan-unavailable", { tabId, reason }),
@@ -247,6 +274,13 @@ function createScannerBackground(api, rules) {
       )
         return;
       return enqueue(details.tabId, async () => {
+        const observation = {
+          url: responsePage(details.url),
+          findings: Array.isArray(details.responseHeaders)
+            ? rules.analyzeHeaders(details.responseHeaders, details.url) : [],
+          coverage: Array.isArray(details.responseHeaders) ? "checked" : "partial",
+        };
+        pendingHeaders.set(details.tabId, observation);
         const stateMatches = (await load(details.tabId)).url === page(details.url);
         trace("document-headers", {
           tabId: details.tabId,
@@ -255,19 +289,7 @@ function createScannerBackground(api, rules) {
         });
         if (!stateMatches)
           await reset(details.tabId, details.url, "document-headers");
-        if (Array.isArray(details.responseHeaders)) {
-          await add(
-            details.tabId,
-            details.url,
-            rules.analyzeHeaders(details.responseHeaders, details.url),
-          );
-        }
-        await markCoverage(
-          details.tabId,
-          details.url,
-          "headers",
-          Array.isArray(details.responseHeaders) ? "checked" : "partial",
-        );
+        await applyHeaders(details.tabId, details.url, observation);
       });
     },
     { urls: ["<all_urls>"], types: ["main_frame"] },
@@ -297,10 +319,7 @@ function createScannerBackground(api, rules) {
         return;
       const owner =
         details.type === "script"
-          ? api.tabs
-              .get(details.tabId)
-              .then((tab) => tab.url)
-              .catch(() => "")
+          ? enqueue(details.tabId, async () => (await load(details.tabId)).document)
           : null;
       if (
         details.type === "script" &&
@@ -342,11 +361,11 @@ function createScannerBackground(api, rules) {
                 "External script",
               );
               return enqueue(details.tabId, async () => {
-                const originalUrl = await owner;
+                const document = await owner;
+                if (!document || (await load(details.tabId)).document !== document) return;
                 const tab = await api.tabs.get(details.tabId);
-                if (!originalUrl || page(tab.url) !== page(originalUrl)) return;
                 if (findings.length)
-                  await add(details.tabId, originalUrl, findings);
+                  await add(details.tabId, tab.url, findings, true);
                 await markScriptCoverage(details.tabId, owner, "checked");
               });
             };
@@ -510,6 +529,7 @@ function createScannerBackground(api, rules) {
       scriptCounts.delete(id);
       injectedPages.delete(id);
       recoveryAttempts.delete(id);
+      pendingHeaders.delete(id);
       lastPopupState.delete(id);
       await api.storage.local.remove(key(id));
     }),

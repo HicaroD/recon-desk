@@ -670,6 +670,30 @@ test("navigation does not inject another scanner when the declarative script is 
   assert.equal(injections, 0);
 });
 
+test("headers delivered before navigation survive commit, including fragment URLs", async () => {
+  for (const fragment of ["", "#section"]) {
+    const api = fakeBrowser();
+    const responseUrl = "https://app.example.test/";
+    const url = responseUrl + fragment;
+    api.tabs.get = async (id) => ({ id, url });
+    createScannerBackground(api, rules);
+    await api.webRequest.onHeadersReceived.emit({
+      tabId: 7, type: "main_frame", url: responseUrl, responseHeaders: [],
+    });
+    await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+    await api.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url });
+    assert.equal(api.data.get("tab:7").coverage.headers, "checked");
+    assert.deepEqual(api.data.get("tab:7").findings.map((item) => item.ruleId).sort(), [
+      "header-csp", "header-hsts",
+    ]);
+    // A cached restore cannot reuse an observation from a previous commit.
+    await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+    await api.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url });
+    assert.equal(api.data.get("tab:7").coverage.headers, "not-inspected");
+    assert.deepEqual(api.data.get("tab:7").findings, []);
+  }
+});
+
 test("early header findings do not make an unfinished scan look complete", async () => {
   const api = fakeBrowser();
   createScannerBackground(api, rules);
@@ -742,6 +766,74 @@ test("external script inspection forwards bytes unchanged and stores only redact
   );
   assert.ok(!JSON.stringify([...api.data]).includes("sb_secret_123456789012"));
   assert.ok(!JSON.stringify([...api.data]).includes("cdn.example.test/app.js"));
+});
+
+test("same-document navigation retains network observations and in-flight scripts until reload", async () => {
+  const api = fakeBrowser();
+  let url = "https://app.example.test/";
+  api.tabs.get = async (id) => ({ id, url });
+  const filters = new Map();
+  api.webRequest.filterResponseData = (id) => {
+    const filter = { write() {}, disconnect() {} };
+    filters.set(id, filter);
+    return filter;
+  };
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await api.webRequest.onHeadersReceived.emit({
+    tabId: 7, type: "main_frame", url, responseHeaders: [],
+  });
+  const request = async (id) => {
+    await api.webRequest.onBeforeRequest.emit({
+      tabId: 7, type: "script", requestId: id,
+      url: "https://cdn.example.test/app.js",
+    });
+    filters.get(id).ondata({ data: Buffer.from('const key = "sb_secret_123456789012";') });
+    return filters.get(id);
+  };
+  await (await request("first")).onstop();
+  const pending = await request("pending");
+  for (const eventName of ["onHistoryStateUpdated", "onReferenceFragmentUpdated"]) {
+    url = eventName === "onHistoryStateUpdated"
+      ? "https://app.example.test/next" : "https://app.example.test/next#section";
+    await api.webNavigation[eventName].emit({ tabId: 7, frameId: 0, url });
+    const state = api.data.get("tab:7");
+    assert.equal(state.coverage.headers, "checked");
+    assert.equal(state.coverage.externalScripts, "checked");
+    assert.equal(state.coverage.storage, "not-inspected");
+    assert.deepEqual(state.findings.map((item) => item.ruleId).sort(), [
+      "header-csp", "header-hsts", "supabase-secret",
+    ]);
+    assert.ok(state.findings.every((item) => item.pagePath === "/next"));
+  }
+  // A delayed script still belongs to this document after a route change.
+  await pending.onstop();
+  assert.equal(api.data.get("tab:7").coverage.externalScripts, "checked");
+  const oldDocument = await request("old-document");
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await oldDocument.onstop();
+  assert.equal(api.data.get("tab:7").coverage.externalScripts, "not-inspected");
+  assert.equal(api.data.get("tab:7").coverage.headers, "not-inspected");
+  assert.deepEqual(api.data.get("tab:7").findings, []);
+});
+
+test("an in-flight script can provide the first network coverage after an SPA transition", async () => {
+  const api = fakeBrowser();
+  let url = "https://app.example.test/";
+  api.tabs.get = async (id) => ({ id, url });
+  let filter;
+  api.webRequest.filterResponseData = () => (filter = { write() {}, disconnect() {} });
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await api.webRequest.onBeforeRequest.emit({
+    tabId: 7, type: "script", requestId: "pending", url: "https://cdn.example.test/app.js",
+  });
+  url = "https://app.example.test/next";
+  await api.webNavigation.onHistoryStateUpdated.emit({ tabId: 7, frameId: 0, url });
+  filter.ondata({ data: Buffer.from('const key = "sb_secret_123456789012";') });
+  await filter.onstop();
+  assert.equal(api.data.get("tab:7").coverage.externalScripts, "checked");
+  assert.equal(api.data.get("tab:7").findings[0].pagePath, "/next");
 });
 
 test("popup state reports which passive sources were observed", async () => {

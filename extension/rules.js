@@ -202,9 +202,12 @@ function analyzeHeaders(headers, url) {
         header.name.toLowerCase() === "content-security-policy" &&
         typeof header.value === "string",
     )
-    .map((header) => {
+    // Firefox can combine multiple CSP headers into a comma-separated policy
+    // list. Each policy is enforced independently, just like separate headers.
+    .flatMap((header) => header.value.split(","))
+    .map((policy) => {
       const directives = new Map(
-        header.value.split(";").map((part) => {
+        policy.split(";").map((part) => {
           const [name, ...sources] = part.trim().split(/\s+/);
           return [name.toLowerCase(), sources];
         }),
