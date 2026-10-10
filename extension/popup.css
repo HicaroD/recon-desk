@@ -1,0 +1,88 @@
+:root {
+  color-scheme: dark;
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  width: 380px;
+  max-height: 570px;
+  margin: 0;
+  overflow-y: auto;
+  background: #111827;
+  color: #ecf1f8;
+}
+header {
+  padding: 20px 20px 14px;
+  border-bottom: 1px solid #334155;
+}
+.eyebrow {
+  color: #66e0bc;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+h1 {
+  margin: 5px 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+header p,
+footer {
+  color: #aebbd0;
+}
+header p {
+  margin: 0;
+}
+main {
+  padding: 12px 16px;
+}
+main > p {
+  margin: 8px 4px;
+  color: #aebbd0;
+}
+#coverage {
+  padding: 0 20px 14px;
+  color: #aebbd0;
+  font-size: 11px;
+}
+.finding {
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 1px solid #334155;
+  border-left: 3px solid #9baac0;
+  border-radius: 7px;
+  background: #1a2639;
+  overflow-wrap: anywhere;
+}
+.finding.high {
+  border-left-color: #fb7185;
+}
+.finding.medium {
+  border-left-color: #fbbf24;
+}
+.finding.low {
+  border-left-color: #60a5fa;
+}
+.finding h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.finding p {
+  margin: 4px 0 0;
+  color: #c5d1e1;
+  font-size: 12px;
+}
+footer {
+  padding: 10px 20px 16px;
+  border-top: 1px solid #334155;
+  font-size: 11px;
+}
+.credit {
+  display: block;
+  margin-top: 8px;
+  color: #66e0bc;
+}

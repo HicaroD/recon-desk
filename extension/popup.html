@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Client Watcher</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="eyebrow">CLIENT WATCHER</span>
+      <h1 id="summary" aria-live="polite">Scanning…</h1>
+      <p id="status" role="status">Loading results for the current tab…</p>
+    </header>
+    <main id="findings" aria-label="Findings"></main>
+    <section id="coverage" aria-label="Scan coverage"></section>
+    <footer>
+      Potential findings need manual validation. Detected values are
+      redacted.<span class="credit">Made by hicro</span>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

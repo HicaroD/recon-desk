@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Client Watcher local test</title>
+  </head>
+  <body>
+    <h1>Client Watcher local test</h1>
+    <p>
+      This page contains fake, intentionally detectable values. It does not use
+      real credentials.
+    </p>
+    <script>
+      const exampleOnlySupabaseKey = "sb_secret_123456789012";
+      localStorage.setItem("auth_token", "fixture-token-value-123");
+      document.cookie = "session_id=fixture-cookie-value; Path=/; SameSite=Lax";
+    </script>
+    <script src="external.js"></script>
+  </body>
+</html>

@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Client Watcher",
+  "version": "0.1.0",
+  "description": "Passive client-side security signals on pages you visit.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "client-watcher@local.invalid",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "permissions": [
+    "cookies",
+    "storage",
+    "webNavigation",
+    "webRequest",
+    "webRequestBlocking",
+    "webRequestFilterResponse"
+  ],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "scripts": ["rules.js", "background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["rules.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Client Watcher findings",
+    "default_popup": "popup.html",
+    "default_icon": "icons/icon.svg"
+  },
+  "icons": { "48": "icons/icon.svg" }
+}
