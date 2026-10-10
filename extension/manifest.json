@@ -12,6 +12,7 @@
   },
   "permissions": [
     "cookies",
+    "scripting",
     "storage",
     "webNavigation",
     "webRequest",
@@ -26,7 +27,7 @@
     {
       "matches": ["http://*/*", "https://*/*"],
       "js": ["rules.js", "content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_end"
     }
   ],
   "action": {

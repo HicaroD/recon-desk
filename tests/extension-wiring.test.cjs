@@ -4,6 +4,14 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const path = require("node:path");
 
+test("page scanning begins after the DOM is parsed without waiting for idle loading", () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"),
+  );
+  assert.equal(manifest.content_scripts[0].run_at, "document_end");
+  assert.ok(manifest.permissions.includes("scripting"));
+});
+
 test("manifest background scripts start and answer the popup state request", async () => {
   const root = path.join(__dirname, "..", "extension");
   const manifest = JSON.parse(

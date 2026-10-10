@@ -3,6 +3,7 @@ function createScannerBackground(api, rules) {
   const queues = new Map();
   const scriptCounts = new Map();
   const lastPopupState = new Map();
+  const injectedPages = new Map();
   let logSequence = 0;
   const trace = (event, details = {}) => {
     if (typeof browser !== "undefined")
@@ -98,6 +99,7 @@ function createScannerBackground(api, rules) {
       previousFindings: previous.findings.length,
     });
     scriptCounts.delete(id);
+    injectedPages.delete(id);
     await save(id, {
       url: page(url),
       status: "scanning",
@@ -170,6 +172,21 @@ function createScannerBackground(api, rules) {
       trace("cookies-unavailable", { tabId: id });
       await markCoverage(id, url, "cookies", "partial");
     }
+  }
+
+  function injectScanner(id, url) {
+    injectedPages.set(id, page(url));
+    // The content script sends findings through this tab's queue, so injection
+    // must not be awaited by work already running in that queue.
+    void api.scripting.executeScript({
+      target: { tabId: id },
+      files: ["rules.js", "content.js"],
+    }).catch(() => enqueue(id, async () => {
+      const current = await load(id);
+      const active = await api.tabs.get(id);
+      if (current.url === page(url) && page(active.url) === page(url) && current.status === "scanning")
+        await save(id, { ...current, status: "error" });
+    }));
   }
 
   api.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId, url }) => {
@@ -355,6 +372,21 @@ function createScannerBackground(api, rules) {
         const tab = await api.tabs.get(message.tabId);
         const state = await load(message.tabId);
         const matches = !!state.url && state.url === page(tab.url);
+        if (!matches && /^https?:/.test(tab.url || "") && api.scripting?.executeScript) {
+          await reset(message.tabId, tab.url, "popup-open");
+          injectScanner(message.tabId, tab.url);
+          return { status: "scanning", findings: [], coverage: emptyCoverage() };
+        }
+        if (matches && state.status === "scanning" && api.scripting?.executeScript &&
+            injectedPages.get(message.tabId) !== page(tab.url)) {
+          let present = false;
+          try {
+            present = (await api.tabs.sendMessage(message.tabId, { type: "scan-presence" })) === true;
+          } catch {
+            // A navigation may have started before the content script was attached.
+          }
+          if (!present) injectScanner(message.tabId, tab.url);
+        }
         const signature = `${matches}:${matches ? state.status : "waiting"}:${matches ? state.findings.length : 0}`;
         if (lastPopupState.get(message.tabId) !== signature) {
           lastPopupState.set(message.tabId, signature);
@@ -441,6 +473,7 @@ function createScannerBackground(api, rules) {
     enqueue(id, async () => {
       states.delete(id);
       scriptCounts.delete(id);
+      injectedPages.delete(id);
       lastPopupState.delete(id);
       await api.storage.local.remove(key(id));
     }),

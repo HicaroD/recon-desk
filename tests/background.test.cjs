@@ -488,6 +488,77 @@ test("a page is empty only after its scan completes and failures remain visible"
   assert.equal((await state()).status, "error");
 });
 
+test("opening the popup scans an already-open page and returns its findings without a reload", async () => {
+  const api = fakeBrowser();
+  const url = "https://app.example.test/";
+  const finding = rules.analyzeStorage(
+    "localStorage", [{ key: "auth_token", value: "secret-value-123" }], url,
+  )[0];
+  let injected;
+  const injectionFinished = new Promise((resolve) => { injected = resolve; });
+  api.scripting = {
+    executeScript: async ({ target, files }) => {
+      assert.deepEqual(target, { tabId: 7 });
+      assert.deepEqual(files, ["rules.js", "content.js"]);
+      await api.runtime.onMessage.emit(
+        { type: "findings", findings: [finding] },
+        { tab: { id: 7 }, url, frameId: 0 },
+      );
+      await api.runtime.onMessage.emit(
+        { type: "scan-complete", coverage: { storage: "checked" } },
+        { tab: { id: 7 }, url, frameId: 0 },
+      );
+      injected();
+    },
+  };
+  createScannerBackground(api, rules);
+  const [first] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 }, {},
+  );
+  assert.equal(first.status, "scanning");
+  // An injection's messages must be able to reach the background queue.
+  await Promise.race([
+    injectionFinished,
+    new Promise((_, reject) => setTimeout(() => reject(Error("scan stalled")), 100)),
+  ]);
+  const [next] = await api.runtime.onMessage.emit({ type: "get-scan-state", tabId: 7 }, {});
+  assert.equal(next.status, "complete");
+  assert.deepEqual(next.findings.map((item) => item.ruleId), ["storage-sensitive"]);
+});
+
+test("an open popup starts a stalled navigation scan when no content script is present", async () => {
+  const api = fakeBrowser();
+  const url = "https://app.example.test/";
+  api.tabs.sendMessage = async () => { throw Error("Receiving end does not exist"); };
+  let injections = 0;
+  api.scripting = { executeScript: async () => { injections++; } };
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  const state = async () => (
+    await api.runtime.onMessage.emit({ type: "get-scan-state", tabId: 7 }, {})
+  )[0];
+  assert.equal((await state()).status, "scanning");
+  assert.equal(injections, 1);
+  await state();
+  assert.equal(injections, 1, "polling must not keep injecting the scanner");
+});
+
+test("popup polling does not reinject when a page scanner is already attached", async () => {
+  const api = fakeBrowser();
+  api.tabs.sendMessage = async () => true;
+  let injections = 0;
+  api.scripting = { executeScript: async () => { injections++; } };
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({
+    tabId: 7, frameId: 0, url: "https://app.example.test/",
+  });
+  const [state] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 }, {},
+  );
+  assert.equal(state.status, "scanning");
+  assert.equal(injections, 0);
+});
+
 test("early header findings do not make an unfinished scan look complete", async () => {
   const api = fakeBrowser();
   createScannerBackground(api, rules);

@@ -6,7 +6,7 @@ A Firefox extension for **automatic, passive** client-side security leads on pag
 
 1. Use Firefox 142 or newer. Open `about:debugging#/runtime/this-firefox`.
 2. Choose **Load Temporary Add-on** and select `extension/manifest.json`.
-3. Approve the requested website access, visit an HTTP or HTTPS page, and click the toolbar icon to inspect findings. Reload an already open tab after installing the extension.
+3. Approve the requested website access, visit an HTTP or HTTPS page, and click the toolbar icon to inspect findings. Opening the popup starts scanning an already open eligible tab too.
 
 Temporary add-ons are removed when Firefox restarts. The ID in the manifest is a development ID; choose a permanent one before publishing.
 
@@ -20,7 +20,7 @@ python3 -m http.server 8765 --directory fixtures
 
 With the add-on loaded, open `http://127.0.0.1:8765/` in a **new** Firefox tab. The page contains fake test values. The toolbar badge should become nonempty; click it to see findings such as **Supabase secret key in browser JavaScript**, **Sensitive value in localStorage**, and **No enforced Content Security Policy**. The external script has a second fake key; its finding appears once its response has been inspected. Cookie results can depend on browser cookie settings. The exact badge count may vary. No real credentials are involved. To check URL scanning too, visit `http://127.0.0.1:8765/?access_token=fixture-token-value-123`.
 
-On a page without matching signals, the popup says **No findings** once its scan finishes. While it is working, it says **Scanning…**. It shows **Scan failed** if page analysis throws, **Page unavailable** on protected browser pages, or **Waiting for page** if the page was already open before installing the add-on—reload that tab. Stop the local server with Ctrl+C.
+On a page without matching signals, the popup says **No findings** once its scan finishes. While it is working, it says **Scanning…**. It shows **Scan failed** if page analysis throws, **Page unavailable** on protected browser pages, or **Waiting for page** if Firefox has not granted page access. Opening the popup also starts a scan on an eligible tab that was already open when the add-on was loaded. Stop the local server with Ctrl+C.
 
 If you edited extension files while Firefox was open and see **Reload add-on** or **Background error**, return to `about:debugging#/runtime/this-firefox`, click **Reload** on Client Watcher, then reload the website. A temporary add-on can otherwise keep an older background script running with a newer popup. If the error remains, click **Inspect** on the Client Watcher entry and check the first error in its console.
 

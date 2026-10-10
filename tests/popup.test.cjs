@@ -117,6 +117,37 @@ test("an open popup refreshes when a late finding arrives", async () => {
   assert.equal(elements.summary.textContent, "1 finding");
 });
 
+test("findings appear while the page scan is still running", async () => {
+  const elements = { summary: node(), status: node(), findings: node() };
+  let refresh;
+  const doc = {
+    getElementById: (id) => elements[id],
+    createElement: () => node(),
+    defaultView: { setTimeout: (callback) => { refresh = callback; } },
+  };
+  let result = { status: "scanning", findings: [] };
+  const api = {
+    tabs: { query: async () => [{ id: 5, url: "https://app.example.test/" }] },
+    runtime: { sendMessage: async () => result },
+  };
+  await showPopup(api, doc);
+  result = {
+    status: "scanning",
+    findings: [{
+      ruleId: "header-csp", severity: "low", confidence: "potential",
+      title: "No CSP", url: "https://app.example.test", evidence: "Main document response",
+    }],
+  };
+  refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(elements.findings.children.length, 1);
+  assert.equal(elements.findings.children[0].children[0].textContent, "No CSP");
+  result = { ...result, status: "complete" };
+  refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(elements.summary.textContent, "1 finding");
+});
+
 test("polling unchanged results keeps the existing finding cards", async () => {
   const elements = { summary: node(), status: node(), findings: node() };
   let refresh;

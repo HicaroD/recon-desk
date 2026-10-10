@@ -127,17 +127,19 @@ async function showPopup(api, doc) {
         result.status === "waiting" ? "Waiting for page" : "Scanning…";
       status.textContent =
         result.status === "waiting"
-          ? "Reload this tab to start a scan."
+          ? "Waiting for page access to start a scan."
           : "Checking the current page. Findings may appear as it loads.";
-      refresh();
-      return;
+      if (!result.findings.length) {
+        refresh();
+        return;
+      }
     }
     const findings = result.findings || [];
     if (result.status === "error") {
       summary.textContent = "Scan failed";
       status.textContent =
         "The page scan could not finish. Reload the tab to retry.";
-    } else {
+    } else if (result.status === "complete") {
       summary.textContent = findings.length
         ? `${findings.length} finding${findings.length === 1 ? "" : "s"}`
         : "No findings";

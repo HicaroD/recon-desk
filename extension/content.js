@@ -89,6 +89,7 @@ async function createContentScanner(win, doc, api, rules) {
   }
 
   api.runtime.onMessage.addListener((message) => {
+    if (message?.type === "scan-presence") return Promise.resolve(true);
     if (message?.type === "rescan") return scan("navigation");
   });
   win.setInterval(() => {
@@ -98,5 +99,7 @@ async function createContentScanner(win, doc, api, rules) {
 }
 
 if (typeof module !== "undefined") module.exports = { createContentScanner };
-if (typeof browser !== "undefined")
-  createContentScanner(window, document, browser, ScannerRules);
+if (typeof browser !== "undefined" && !globalThis.__clientWatcherStarted) {
+  globalThis.__clientWatcherStarted = true;
+  void createContentScanner(window, document, browser, ScannerRules);
+}

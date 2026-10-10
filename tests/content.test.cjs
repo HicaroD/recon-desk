@@ -227,3 +227,23 @@ test("a failed page scan reports an error without sending exception details", as
   await createContentScanner(win, doc, api, rules);
   assert.deepEqual(messages, [{ type: "scan-error" }]);
 });
+
+test("the popup can detect an attached scanner without starting another scan", async () => {
+  const messages = [];
+  let onMessage;
+  await createContentScanner(
+    {
+      location: { href: "https://app.example.test/" },
+      localStorage: { length: 0 }, sessionStorage: { length: 0 },
+      setInterval: () => {},
+    },
+    { querySelectorAll: () => [] },
+    { runtime: {
+      sendMessage: async (message) => messages.push(message),
+      onMessage: { addListener: (handler) => { onMessage = handler; } },
+    } },
+    rules,
+  );
+  assert.equal(await onMessage({ type: "scan-presence" }), true);
+  assert.deepEqual(messages.map((message) => message.type), ["scan-complete"]);
+});
