@@ -2,6 +2,13 @@ function createScannerBackground(api, rules) {
   const states = new Map();
   const queues = new Map();
   const scriptCounts = new Map();
+  const lastPopupState = new Map();
+  let logSequence = 0;
+  const trace = (event, details = {}) => {
+    if (typeof browser !== "undefined")
+      console.info(`[Client Watcher background #${++logSequence}] ${event}`, details);
+  };
+  trace("ready");
   const key = (id) => `tab:${id}`;
   const emptyCoverage = () => ({
     storage: "not-inspected",
@@ -50,6 +57,7 @@ function createScannerBackground(api, rules) {
         if (queues.get(id) === next) queues.delete(id);
       },
       () => {
+        trace("work-failed", { tabId: id });
         if (queues.get(id) === next) queues.delete(id);
       },
     );
@@ -80,7 +88,15 @@ function createScannerBackground(api, rules) {
     });
   }
 
-  async function reset(id, url) {
+  async function reset(id, url, reason) {
+    const previous = await load(id);
+    trace("reset", {
+      tabId: id,
+      reason,
+      samePage: previous.url === page(url),
+      previousStatus: previous.status,
+      previousFindings: previous.findings.length,
+    });
     scriptCounts.delete(id);
     await save(id, {
       url: page(url),
@@ -151,30 +167,41 @@ function createScannerBackground(api, rules) {
       );
       await markCoverage(id, url, "cookies", "checked");
     } catch {
+      trace("cookies-unavailable", { tabId: id });
       await markCoverage(id, url, "cookies", "partial");
     }
   }
 
   api.webNavigation.onBeforeNavigate.addListener(({ tabId, frameId, url }) => {
-    if (tabId >= 0 && frameId === 0)
-      return enqueue(tabId, () => reset(tabId, url));
+    if (tabId >= 0 && frameId === 0) {
+      trace("navigation-before", { tabId });
+      return enqueue(tabId, () => reset(tabId, url, "navigation-before"));
+    }
   });
   api.webNavigation.onCommitted.addListener(({ tabId, frameId, url }) => {
     if (tabId >= 0 && frameId === 0)
       return enqueue(tabId, async () => {
         const tab = await api.tabs.get(tabId);
-        if (page(tab.url) !== page(url)) return;
-        if ((await load(tabId)).url !== page(url)) await reset(tabId, url);
+        const tabMatches = page(tab.url) === page(url);
+        const stateMatches = (await load(tabId)).url === page(url);
+        trace("navigation-committed", { tabId, tabMatches, stateMatches });
+        if (!tabMatches) return;
+        if (!stateMatches) await reset(tabId, url, "navigation-committed");
       });
   });
-  const rescanOnNavigation = ({ tabId, frameId, url }) => {
-    if (tabId >= 0 && frameId === 0)
-      return enqueue(tabId, () => reset(tabId, url)).then(() => {
-        void api.tabs.sendMessage(tabId, { type: "rescan" }).catch(() => {});
+  const rescanOnNavigation = (reason) => ({ tabId, frameId, url }) => {
+    if (tabId >= 0 && frameId === 0) {
+      trace("navigation-same-document", { tabId, reason });
+      return enqueue(tabId, () => reset(tabId, url, reason)).then(() => {
+        void api.tabs.sendMessage(tabId, { type: "rescan" }).then(
+          () => trace("rescan-delivered", { tabId, reason }),
+          () => trace("rescan-unavailable", { tabId, reason }),
+        );
       });
+    }
   };
-  api.webNavigation.onHistoryStateUpdated.addListener(rescanOnNavigation);
-  api.webNavigation.onReferenceFragmentUpdated.addListener(rescanOnNavigation);
+  api.webNavigation.onHistoryStateUpdated.addListener(rescanOnNavigation("history"));
+  api.webNavigation.onReferenceFragmentUpdated.addListener(rescanOnNavigation("fragment"));
   api.webRequest.onHeadersReceived.addListener(
     (details) => {
       if (
@@ -184,8 +211,14 @@ function createScannerBackground(api, rules) {
       )
         return;
       return enqueue(details.tabId, async () => {
-        if ((await load(details.tabId)).url !== page(details.url))
-          await reset(details.tabId, details.url);
+        const stateMatches = (await load(details.tabId)).url === page(details.url);
+        trace("document-headers", {
+          tabId: details.tabId,
+          stateMatches,
+          available: Array.isArray(details.responseHeaders),
+        });
+        if (!stateMatches)
+          await reset(details.tabId, details.url, "document-headers");
         if (Array.isArray(details.responseHeaders)) {
           await add(
             details.tabId,
@@ -321,7 +354,18 @@ function createScannerBackground(api, rules) {
       return enqueue(message.tabId, async () => {
         const tab = await api.tabs.get(message.tabId);
         const state = await load(message.tabId);
-        if (!state.url || state.url !== page(tab.url))
+        const matches = !!state.url && state.url === page(tab.url);
+        const signature = `${matches}:${matches ? state.status : "waiting"}:${matches ? state.findings.length : 0}`;
+        if (lastPopupState.get(message.tabId) !== signature) {
+          lastPopupState.set(message.tabId, signature);
+          trace("popup-state", {
+            tabId: message.tabId,
+            matches,
+            status: matches ? state.status : "waiting",
+            findings: matches ? state.findings.length : 0,
+          });
+        }
+        if (!matches)
           return { status: "waiting", findings: [], coverage: emptyCoverage() };
         await scanCookies(message.tabId, tab.url, tab);
         const current = await load(message.tabId);
@@ -347,12 +391,27 @@ function createScannerBackground(api, rules) {
       return;
     return enqueue(sender.tab.id, async () => {
       const tab = await api.tabs.get(sender.tab.id);
-      if (page(tab.url) !== page(sender.url)) return;
-      if ((await load(sender.tab.id)).url !== page(sender.url))
-        await reset(sender.tab.id, sender.url);
+      const tabMatches = page(tab.url) === page(sender.url);
+      const stateMatches = (await load(sender.tab.id)).url === page(sender.url);
+      trace("content-message", {
+        tabId: sender.tab.id,
+        type: message.type,
+        tabMatches,
+        stateMatches,
+        findings: message.type === "findings" && Array.isArray(message.findings)
+          ? message.findings.length
+          : undefined,
+      });
+      if (!tabMatches) return;
+      if (!stateMatches)
+        await reset(sender.tab.id, sender.url, "content-message");
       if (message.type === "findings") {
         if (Array.isArray(message.findings))
           await add(sender.tab.id, sender.url, message.findings);
+        trace("findings-accepted", {
+          tabId: sender.tab.id,
+          total: (await load(sender.tab.id)).findings.length,
+        });
         return;
       }
       const state = await load(sender.tab.id);
@@ -369,6 +428,11 @@ function createScannerBackground(api, rules) {
         coverage,
         status: message.type === "scan-error" ? "error" : "complete",
       });
+      trace("scan-status", {
+        tabId: sender.tab.id,
+        status: message.type === "scan-error" ? "error" : "complete",
+        findings: state.findings.length,
+      });
       if (message.type === "scan-complete")
         await scanCookies(sender.tab.id, sender.url, tab);
     });
@@ -377,6 +441,7 @@ function createScannerBackground(api, rules) {
     enqueue(id, async () => {
       states.delete(id);
       scriptCounts.delete(id);
+      lastPopupState.delete(id);
       await api.storage.local.remove(key(id));
     }),
   );

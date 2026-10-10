@@ -40,6 +40,10 @@ const explanations = {
 const renderedStates = new WeakMap();
 
 async function showPopup(api, doc) {
+  const trace = (event, details = {}) => {
+    if (typeof browser !== "undefined")
+      console.info(`[Client Watcher popup] ${event}`, details);
+  };
   const summary = doc.getElementById("summary");
   const status = doc.getElementById("status");
   const list = doc.getElementById("findings");
@@ -51,6 +55,7 @@ async function showPopup(api, doc) {
   try {
     const [tab] = await api.tabs.query({ active: true, currentWindow: true });
     if (!tab || !/^https?:/.test(tab.url || "")) {
+      trace("page-unavailable");
       renderedStates.delete(doc);
       list.replaceChildren();
       summary.textContent = "Page unavailable";
@@ -64,6 +69,7 @@ async function showPopup(api, doc) {
         tabId: tab.id,
       });
     } catch {
+      trace("background-error", { tabId: tab.id });
       renderedStates.delete(doc);
       list.replaceChildren();
       summary.textContent = "Background error";
@@ -76,6 +82,7 @@ async function showPopup(api, doc) {
       !["waiting", "scanning", "complete", "error"].includes(result.status) ||
       !Array.isArray(result.findings)
     ) {
+      trace("invalid-response", { tabId: tab.id });
       renderedStates.delete(doc);
       list.replaceChildren();
       summary.textContent = "Reload add-on";
@@ -89,6 +96,11 @@ async function showPopup(api, doc) {
       return;
     }
     renderedStates.set(doc, renderKey);
+    trace("state", {
+      tabId: tab.id,
+      status: result.status,
+      findings: result.findings.length,
+    });
     list.replaceChildren();
     if (coverage) {
       const names = {
@@ -161,6 +173,7 @@ async function showPopup(api, doc) {
     }
     refresh();
   } catch {
+    trace("popup-error");
     renderedStates.delete(doc);
     list.replaceChildren();
     summary.textContent = "Scan unavailable";

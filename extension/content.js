@@ -1,7 +1,16 @@
 async function createContentScanner(win, doc, api, rules) {
-  async function scan() {
+  let scanNumber = 0;
+  const trace = (event, details = {}) => {
+    if (typeof browser !== "undefined")
+      console.info(`[Client Watcher content] ${event}`, details);
+  };
+  trace("ready");
+  async function scan(reason) {
     const url = win.location.href;
     if (!/^https?:/.test(url)) return;
+    const scanId = ++scanNumber;
+    let phase = "analysis";
+    trace("scan-start", { scanId, reason });
     try {
       const findings = rules.analyzeUrl(url);
       const coverage = {
@@ -59,25 +68,33 @@ async function createContentScanner(win, doc, api, rules) {
           );
         }
       }
-      if (findings.length)
+      if (findings.length) {
+        phase = "findings-message";
+        trace("findings-send", { scanId, count: findings.length });
         await api.runtime.sendMessage({ type: "findings", findings });
+      }
+      phase = "completion-message";
       await api.runtime.sendMessage({ type: "scan-complete", coverage });
+      trace("scan-complete", { scanId, count: findings.length, coverage });
     } catch {
+      trace("scan-failed", { scanId, phase });
       try {
         await api.runtime.sendMessage({ type: "scan-error" });
+        trace("error-delivered", { scanId });
       } catch {
+        trace("error-undelivered", { scanId });
         /* The tab may be closing. */
       }
     }
   }
 
   api.runtime.onMessage.addListener((message) => {
-    if (message?.type === "rescan") return scan();
+    if (message?.type === "rescan") return scan("navigation");
   });
   win.setInterval(() => {
-    void scan();
+    void scan("interval");
   }, 30000);
-  await scan();
+  await scan("initial");
 }
 
 if (typeof module !== "undefined") module.exports = { createContentScanner };
