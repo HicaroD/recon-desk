@@ -26,7 +26,9 @@ test("manifest background scripts start and answer the popup state request", asy
     runtime,
     webNavigation: {
       onBeforeNavigate: event(),
+      onCommitted: event(),
       onHistoryStateUpdated: event(),
+      onReferenceFragmentUpdated: event(),
     },
     webRequest: {
       onHeadersReceived: event(),

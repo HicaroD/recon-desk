@@ -147,7 +147,7 @@ async function showPopup(api, doc) {
       const heading = doc.createElement("h2");
       heading.textContent = item.title;
       const meta = doc.createElement("p");
-      meta.textContent = `${item.severity.toUpperCase()} · ${item.confidence} · ${item.url}`;
+      meta.textContent = `${item.severity.toUpperCase()} · ${item.confidence} · ${item.url}${item.pagePath || ""}`;
       const evidence = doc.createElement("p");
       evidence.textContent = item.evidence;
       const explanation = doc.createElement("p");

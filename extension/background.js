@@ -13,9 +13,30 @@ function createScannerBackground(api, rules) {
   });
   const page = (url) => {
     try {
-      return new URL(url).origin;
+      const parsed = new URL(url);
+      let hash = 2166136261;
+      for (const char of parsed.href)
+        hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+      return `${parsed.origin}#${(hash >>> 0).toString(16)}`;
     } catch {
       return "";
+    }
+  };
+  const pagePath = (url) => {
+    try {
+      const segments = new URL(url).pathname.split("/");
+      return segments
+        .slice(0, 13)
+        .map((segment, index) =>
+          !segment ||
+          (/^[A-Za-z0-9._~-]{1,24}$/.test(segment) &&
+            !/^(reset|token|verify|invite|password|key)$/i.test(segments[index - 1]))
+            ? segment
+            : "[redacted]",
+        )
+        .join("/") + (segments.length > 13 ? "/[redacted]" : "");
+    } catch {
+      return "/";
     }
   };
 
@@ -60,14 +81,12 @@ function createScannerBackground(api, rules) {
   }
 
   async function reset(id, url) {
-    const state = await load(id);
-    const sameSite = state.url === page(url);
-    if (!sameSite) scriptCounts.delete(id);
+    scriptCounts.delete(id);
     await save(id, {
       url: page(url),
       status: "scanning",
-      findings: sameSite ? state.findings : [],
-      coverage: sameSite ? state.coverage : emptyCoverage(),
+      findings: [],
+      coverage: emptyCoverage(),
     });
   }
 
@@ -95,9 +114,10 @@ function createScannerBackground(api, rules) {
       url: state.url || page(url),
       findings: [...state.findings],
     };
+    const path = pagePath(url);
     const seen = new Set(
       next.findings.map(
-        (item) => `${item.ruleId}:${item.url}:${item.evidence}`,
+        (item) => `${item.ruleId}:${item.url}:${item.pagePath}:${item.evidence}`,
       ),
     );
     for (const item of findings) {
@@ -108,9 +128,9 @@ function createScannerBackground(api, rules) {
         !/^https?:/.test(item.url || "")
       )
         continue;
-      const identity = `${item.ruleId}:${item.url}:${item.evidence}`;
+      const identity = `${item.ruleId}:${item.url}:${path}:${item.evidence}`;
       if (!seen.has(identity) && next.findings.length < 100) {
-        next.findings.push(item);
+        next.findings.push({ ...item, pagePath: path });
         seen.add(identity);
       }
     }
@@ -139,14 +159,22 @@ function createScannerBackground(api, rules) {
     if (tabId >= 0 && frameId === 0)
       return enqueue(tabId, () => reset(tabId, url));
   });
-  api.webNavigation.onHistoryStateUpdated.addListener(
-    ({ tabId, frameId, url }) => {
-      if (tabId >= 0 && frameId === 0)
-        return enqueue(tabId, () => reset(tabId, url)).then(() => {
-          void api.tabs.sendMessage(tabId, { type: "rescan" }).catch(() => {});
-        });
-    },
-  );
+  api.webNavigation.onCommitted.addListener(({ tabId, frameId, url }) => {
+    if (tabId >= 0 && frameId === 0)
+      return enqueue(tabId, async () => {
+        const tab = await api.tabs.get(tabId);
+        if (page(tab.url) !== page(url)) return;
+        if ((await load(tabId)).url !== page(url)) await reset(tabId, url);
+      });
+  });
+  const rescanOnNavigation = ({ tabId, frameId, url }) => {
+    if (tabId >= 0 && frameId === 0)
+      return enqueue(tabId, () => reset(tabId, url)).then(() => {
+        void api.tabs.sendMessage(tabId, { type: "rescan" }).catch(() => {});
+      });
+  };
+  api.webNavigation.onHistoryStateUpdated.addListener(rescanOnNavigation);
+  api.webNavigation.onReferenceFragmentUpdated.addListener(rescanOnNavigation);
   api.webRequest.onHeadersReceived.addListener(
     (details) => {
       if (
@@ -156,6 +184,8 @@ function createScannerBackground(api, rules) {
       )
         return;
       return enqueue(details.tabId, async () => {
+        if ((await load(details.tabId)).url !== page(details.url))
+          await reset(details.tabId, details.url);
         if (Array.isArray(details.responseHeaders)) {
           await add(
             details.tabId,
@@ -318,6 +348,8 @@ function createScannerBackground(api, rules) {
     return enqueue(sender.tab.id, async () => {
       const tab = await api.tabs.get(sender.tab.id);
       if (page(tab.url) !== page(sender.url)) return;
+      if ((await load(sender.tab.id)).url !== page(sender.url))
+        await reset(sender.tab.id, sender.url);
       if (message.type === "findings") {
         if (Array.isArray(message.findings))
           await add(sender.tab.id, sender.url, message.findings);

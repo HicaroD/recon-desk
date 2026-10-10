@@ -23,7 +23,9 @@ function fakeBrowser() {
     badges,
     webNavigation: {
       onBeforeNavigate: event(),
+      onCommitted: event(),
       onHistoryStateUpdated: event(),
+      onReferenceFragmentUpdated: event(),
     },
     webRequest: {
       onHeadersReceived: event(),
@@ -90,7 +92,7 @@ test("badge counts deduplicated findings and resets when leaving the site", asyn
   assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
 });
 
-test("findings accumulate across a site's pages and clear when leaving the site", async () => {
+test("findings and coverage clear on the next page of the same site", async () => {
   const api = fakeBrowser();
   let url = "https://app.example.test/first";
   api.tabs.get = async (id) => ({ id, url });
@@ -106,24 +108,202 @@ test("findings accumulate across a site's pages and clear when leaving the site"
 
   await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
   await api.runtime.onMessage.emit({ type: "findings", findings: [first] }, sender());
+  await api.runtime.onMessage.emit(
+    { type: "scan-complete", coverage: { storage: "checked" } },
+    sender(),
+  );
   url = "https://app.example.test/second";
   await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
-  assert.deepEqual((await state()).findings.map((item) => item.ruleId), ["storage-sensitive"]);
+  assert.deepEqual((await state()).findings, []);
   assert.equal((await state()).status, "scanning");
+  assert.equal((await state()).coverage.storage, "not-inspected");
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
 
   const second = rules.analyzePasswordForm("http://login.example.test/", url, "Login form")[0];
   await api.runtime.onMessage.emit({ type: "findings", findings: [second] }, sender());
   await api.runtime.onMessage.emit({ type: "scan-complete", coverage: {} }, sender());
   assert.deepEqual((await state()).findings.map((item) => item.ruleId), [
-    "storage-sensitive",
     "password-form-http",
   ]);
-  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "2" });
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "1" });
 
   url = "https://elsewhere.example.test/";
   await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
   assert.deepEqual((await state()).findings, []);
   assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
+});
+
+test("revisiting a finding on another page shows only the current page path", async () => {
+  const api = fakeBrowser();
+  let url = "https://app.example.test/account?access_token=private-value-123";
+  api.tabs.get = async (id) => ({ id, url });
+  createScannerBackground(api, rules);
+  const finding = rules.analyzeStorage(
+    "localStorage",
+    [{ key: "auth_token", value: "secret-value-123" }],
+    url,
+  )[0];
+  for (const route of [url, "https://app.example.test/settings"]) {
+    url = route;
+    await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+    await api.runtime.onMessage.emit(
+      { type: "findings", findings: [finding] },
+      { tab: { id: 7 }, url, frameId: 0 },
+    );
+  }
+  const [state] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 },
+    {},
+  );
+  assert.deepEqual(state.findings.map((item) => item.pagePath), ["/settings"]);
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "1" });
+  assert.ok(!JSON.stringify([...api.data]).includes("private-value-123"));
+});
+
+test("SPA and fragment navigation clear the previous result and reject late messages", async () => {
+  const api = fakeBrowser();
+  let url = "https://app.example.test/account?access_token=private-value-123";
+  api.tabs.get = async (id) => ({ id, url });
+  createScannerBackground(api, rules);
+  const finding = rules.analyzeStorage(
+    "localStorage",
+    [{ key: "auth_token", value: "secret-value-123" }],
+    url,
+  )[0];
+  const sender = (source) => ({ tab: { id: 7 }, url: source, frameId: 0 });
+  const state = async () =>
+    (await api.runtime.onMessage.emit({ type: "get-scan-state", tabId: 7 }, {}))[0];
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await api.runtime.onMessage.emit({ type: "findings", findings: [finding] }, sender(url));
+  const oldUrl = url;
+  url = "https://app.example.test/account?access_token=other-private-value#step2";
+  await api.webNavigation.onHistoryStateUpdated.emit({ tabId: 7, frameId: 0, url });
+  await api.runtime.onMessage.emit({ type: "findings", findings: [finding] }, sender(oldUrl));
+  await api.runtime.onMessage.emit({ type: "scan-complete", coverage: {} }, sender(oldUrl));
+  assert.deepEqual((await state()).findings, []);
+  assert.equal((await state()).status, "scanning");
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
+  assert.ok(!JSON.stringify([...api.data]).includes("other-private-value"));
+
+  await api.runtime.onMessage.emit({ type: "findings", findings: [finding] }, sender(url));
+  assert.equal((await state()).findings.length, 1);
+  url = "https://app.example.test/account?access_token=other-private-value#step3";
+  await api.webNavigation.onReferenceFragmentUpdated.emit({ tabId: 7, frameId: 0, url });
+  assert.deepEqual((await state()).findings, []);
+});
+
+test("reloading the current URL clears its old findings before rescanning", async () => {
+  const api = fakeBrowser();
+  createScannerBackground(api, rules);
+  const url = "https://app.example.test/account";
+  const sender = { tab: { id: 7 }, url, frameId: 0 };
+  const finding = rules.analyzeStorage(
+    "localStorage",
+    [{ key: "auth_token", value: "secret-value-123" }],
+    url,
+  )[0];
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  await api.runtime.onMessage.emit({ type: "findings", findings: [finding] }, sender);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  assert.deepEqual(api.data.get("tab:7").findings, []);
+  assert.equal(api.data.get("tab:7").status, "scanning");
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "" });
+});
+
+test("a redirected first visit finishes scanning the final page without a reload", async () => {
+  const api = fakeBrowser();
+  const requested = "https://app.example.test/start";
+  const finalUrl = "https://app.example.test/dashboard";
+  api.tabs.get = async (id) => ({ id, url: finalUrl });
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url: requested });
+  await api.webRequest.onHeadersReceived.emit({
+    tabId: 7,
+    type: "main_frame",
+    url: finalUrl,
+    responseHeaders: [],
+  });
+  await api.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url: finalUrl });
+  const finding = rules.analyzeStorage(
+    "localStorage",
+    [{ key: "auth_token", value: "secret-value-123" }],
+    finalUrl,
+  )[0];
+  const sender = { tab: { id: 7 }, url: finalUrl, frameId: 0 };
+  await api.runtime.onMessage.emit({ type: "findings", findings: [finding] }, sender);
+  await api.runtime.onMessage.emit(
+    { type: "scan-complete", coverage: { storage: "checked" } },
+    sender,
+  );
+  const [state] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 },
+    {},
+  );
+  assert.equal(state.status, "complete");
+  assert.deepEqual(
+    state.findings.filter((item) => item.ruleId === "storage-sensitive").map((item) => item.pagePath),
+    ["/dashboard"],
+  );
+  assert.equal(state.coverage.headers, "checked");
+  assert.deepEqual(api.badges.at(-1), { tabId: 7, text: "3" });
+});
+
+test("the active page's first scan recovers when navigation events miss its final URL", async () => {
+  const api = fakeBrowser();
+  const finalUrl = "https://app.example.test/dashboard";
+  api.tabs.get = async (id) => ({ id, url: finalUrl });
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({
+    tabId: 7,
+    frameId: 0,
+    url: "https://app.example.test/start",
+  });
+  const sender = { tab: { id: 7 }, url: finalUrl, frameId: 0 };
+  await api.runtime.onMessage.emit(
+    { type: "scan-complete", coverage: { storage: "checked" } },
+    sender,
+  );
+  const [state] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 },
+    {},
+  );
+  assert.equal(state.status, "complete");
+  assert.equal(state.coverage.storage, "checked");
+  assert.ok(!JSON.stringify([...api.data]).includes("/dashboard"));
+});
+
+test("a late commit for a previous URL cannot clear the current page", async () => {
+  const api = fakeBrowser();
+  const currentUrl = "https://app.example.test/dashboard";
+  api.tabs.get = async (id) => ({ id, url: currentUrl });
+  createScannerBackground(api, rules);
+  await api.webNavigation.onBeforeNavigate.emit({
+    tabId: 7,
+    frameId: 0,
+    url: "https://app.example.test/start",
+  });
+  const finding = rules.analyzeStorage(
+    "localStorage",
+    [{ key: "auth_token", value: "secret-value-123" }],
+    currentUrl,
+  )[0];
+  const sender = { tab: { id: 7 }, url: currentUrl, frameId: 0 };
+  await api.runtime.onMessage.emit({ type: "findings", findings: [finding] }, sender);
+  await api.runtime.onMessage.emit(
+    { type: "scan-complete", coverage: { storage: "checked" } },
+    sender,
+  );
+  await api.webNavigation.onCommitted.emit({
+    tabId: 7,
+    frameId: 0,
+    url: "https://app.example.test/start",
+  });
+  const [state] = await api.runtime.onMessage.emit(
+    { type: "get-scan-state", tabId: 7 },
+    {},
+  );
+  assert.equal(state.status, "complete");
+  assert.deepEqual(state.findings.map((item) => item.pagePath), ["/dashboard"]);
 });
 
 test("response headers, completed cookies, and subrequest URLs contribute to the tab", async () => {
@@ -233,6 +413,17 @@ test("tab state never stores raw path tokens", async () => {
     frameId: 0,
     url: `https://app.example.test/reset/${token}`,
   });
+  const finding = rules.analyzeStorage(
+    "localStorage",
+    [{ key: "auth_token", value: "secret-value-123" }],
+    `https://app.example.test/reset/${token}`,
+  )[0];
+  api.tabs.get = async (id) => ({ id, url: `https://app.example.test/reset/${token}` });
+  await api.runtime.onMessage.emit(
+    { type: "findings", findings: [finding] },
+    { tab: { id: 7 }, url: `https://app.example.test/reset/${token}`, frameId: 0 },
+  );
+  assert.equal(api.data.get("tab:7").findings[0].pagePath, "/reset/[redacted]");
   assert.ok(!JSON.stringify([...api.data]).includes(token));
 });
 

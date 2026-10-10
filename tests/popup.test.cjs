@@ -36,6 +36,7 @@ test("popup presents the active tab findings without injecting evidence as HTML"
             confidence: "potential",
             title: "Sensitive value in localStorage",
             url: "https://app.example.test/",
+            pagePath: "/account",
             evidence: "<img src=x onerror=alert(1)>",
           },
         ],
@@ -44,6 +45,7 @@ test("popup presents the active tab findings without injecting evidence as HTML"
   };
   await showPopup(api, doc);
   assert.equal(elements.summary.textContent, "1 finding");
+  assert.ok(JSON.stringify(elements.findings).includes("/account"));
   assert.equal(elements.findings.children.length, 1);
   assert.ok(
     JSON.stringify(elements.findings).includes("<img src=x onerror=alert(1)>"),
