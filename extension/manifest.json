@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Client Watcher",
+  "name": "ReconDesk",
   "version": "0.1.0",
-  "description": "Passive client-side security signals on pages you visit.",
+  "description": "Passive security leads, evidence capture, and site-specific notes for browser-based recon.",
   "browser_specific_settings": {
     "gecko": {
       "id": "client-watcher@local.invalid",
@@ -31,12 +31,12 @@
     }
   ],
   "action": {
-    "default_title": "Client Watcher findings",
+    "default_title": "ReconDesk findings",
     "default_popup": "popup.html",
     "default_icon": "icons/icon.svg"
   },
   "sidebar_action": {
-    "default_title": "Recon notebook",
+    "default_title": "ReconDesk notebook",
     "default_panel": "sidebar.html",
     "default_icon": "icons/icon.svg",
     "open_at_install": false

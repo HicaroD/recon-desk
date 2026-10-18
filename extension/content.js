@@ -2,7 +2,7 @@ async function createContentScanner(win, doc, api, rules) {
   let scanNumber = 0;
   const trace = (event, details = {}) => {
     if (typeof browser !== "undefined")
-      console.info(`[Client Watcher content] ${event}`, details);
+      console.info(`[ReconDesk content] ${event}`, details);
   };
   trace("ready");
   async function scan(reason) {

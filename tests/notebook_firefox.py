@@ -39,7 +39,7 @@ def main():
     parser.add_argument('--firefox')
     parser.add_argument('--screenshot', type=pathlib.Path, help='Optional native sidebar screenshot')
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='client-watcher-notebook-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='recondesk-notebook-') as temporary:
         root = pathlib.Path(temporary)
         extension = root / 'extension'
         shutil.copytree(pathlib.Path(__file__).resolve().parents[1] / 'extension', extension)

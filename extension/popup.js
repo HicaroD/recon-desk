@@ -53,7 +53,7 @@ async function showPopup(api, doc) {
   }
   const trace = (event, details = {}) => {
     if (typeof browser !== "undefined")
-      console.info(`[Client Watcher popup] ${event}`, details);
+      console.info(`[ReconDesk popup] ${event}`, details);
   };
   const summary = doc.getElementById("summary");
   const status = doc.getElementById("status");
@@ -85,7 +85,7 @@ async function showPopup(api, doc) {
       list.replaceChildren();
       summary.textContent = "Background error";
       status.textContent =
-        "Reload Client Watcher in about:debugging. If it repeats, click Inspect on its entry and check the first error.";
+        "Reload ReconDesk in about:debugging. If it repeats, click Inspect on its entry and check the first error.";
       return;
     }
     if (
@@ -98,7 +98,7 @@ async function showPopup(api, doc) {
       list.replaceChildren();
       summary.textContent = "Reload add-on";
       status.textContent =
-        "The popup and background may be different versions. Open about:debugging, click This Firefox, then Reload Client Watcher.";
+        "The popup and background may be different versions. Open about:debugging, click This Firefox, then Reload ReconDesk.";
       return;
     }
     const renderKey = JSON.stringify([tab.id, tab.url, result]);

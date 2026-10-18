@@ -11,7 +11,7 @@ function createScannerBackground(api, rules) {
   let logSequence = 0;
   const trace = (event, details = {}) => {
     if (typeof browser !== "undefined")
-      console.info(`[Client Watcher background #${++logSequence}] ${event}`, details);
+      console.info(`[ReconDesk background #${++logSequence}] ${event}`, details);
   };
   trace("ready");
   const key = (id) => `tab:${id}`;

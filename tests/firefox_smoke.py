@@ -125,7 +125,7 @@ def main():
     assert implemented_rules == expected_rules, (
         f'Update Firefox fixtures: uncovered rules={implemented_rules - expected_rules}, '
         f'unknown expectations={expected_rules - implemented_rules}')
-    with tempfile.TemporaryDirectory(prefix='client-watcher-firefox-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='recondesk-firefox-') as temporary:
         root = pathlib.Path(temporary)
         extension = root / 'extension'
         shutil.copytree(args.extension_dir, extension)
