@@ -1,6 +1,17 @@
-# ReconDesk
+<p align="center">
+  <img src="extension/icons/icon.svg" alt="ReconDesk shield logo" width="88" height="88" />
+</p>
 
-**Your browser-based recon workspace.**
+<h1 align="center">ReconDesk</h1>
+
+<p align="center"><strong>Your browser-based recon workspace.</strong></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.1.0-163d3d?style=flat" alt="Version 0.1.0" />
+  <img src="https://img.shields.io/badge/Firefox-142%2B-163d3d?style=flat&amp;logo=firefoxbrowser&amp;logoColor=white" alt="Firefox 142 or later" />
+  <img src="https://img.shields.io/badge/Manifest-V3-163d3d?style=flat" alt="Manifest V3" />
+  <img src="https://img.shields.io/badge/storage-local--only-163d3d?style=flat" alt="Local-only storage" />
+</p>
 
 ReconDesk is a Firefox recon companion for bug bounty research. Discover passive security leads, capture evidence, and organize site-specific notes as you investigate.
 
