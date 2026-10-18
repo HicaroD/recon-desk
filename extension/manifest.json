@@ -21,7 +21,7 @@
   ],
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": {
-    "scripts": ["rules.js", "background.js"]
+    "scripts": ["rules.js", "notebook.js", "background.js"]
   },
   "content_scripts": [
     {
@@ -34,6 +34,12 @@
     "default_title": "Client Watcher findings",
     "default_popup": "popup.html",
     "default_icon": "icons/icon.svg"
+  },
+  "sidebar_action": {
+    "default_title": "Recon notebook",
+    "default_panel": "sidebar.html",
+    "default_icon": "icons/icon.svg",
+    "open_at_install": false
   },
   "icons": { "48": "icons/icon.svg" }
 }

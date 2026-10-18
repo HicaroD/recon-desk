@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Client Watcher — Recon notebook</title>
+    <link rel="stylesheet" href="sidebar.css" />
+  </head>
+  <body>
+    <header>
+      <span class="eyebrow">CLIENT WATCHER / RECON</span>
+      <h1>Notebook</h1>
+      <p id="site">Loading current site…</p>
+      <div class="toolbar">
+        <button id="add-note" type="button" class="primary" disabled>+ Add note</button>
+        <button id="export-notes" type="button" disabled>Export Markdown</button>
+      </div>
+      <p class="hint">Stored on this device. Page links omit queries and fragments.</p>
+    </header>
+    <main>
+      <section id="editor" aria-labelledby="editor-title" hidden>
+        <h2 id="editor-title">Your observation</h2>
+        <p class="hint">Editing a note for <span id="editor-source"></span></p>
+        <label for="note-text">Note</label>
+        <textarea id="note-text" rows="8" maxlength="100000" placeholder="What did you notice? What will you test next?" spellcheck="false"></textarea>
+        <label for="note-tags">Tags <span class="hint">(comma-separated)</span></label>
+        <input id="note-tags" type="text" placeholder="auth, idor, uploads" />
+        <label for="note-progress">Progress</label>
+        <select id="note-progress">
+          <option>To investigate</option><option>Testing</option><option>Done</option>
+        </select>
+        <p id="editor-status" role="status"></p>
+        <div class="toolbar">
+          <button id="save-note" class="primary" type="button">Save note</button>
+          <button id="close-editor" type="button">Close editor</button>
+        </div>
+        <p class="hint">Edits save as a draft while you type. Save note marks it ready.</p>
+      </section>
+      <section class="filters" aria-label="Filter notes">
+        <div>
+          <label for="filter-progress">Progress</label>
+          <select id="filter-progress">
+            <option value="">All progress</option>
+            <option>To investigate</option><option>Testing</option><option>Done</option>
+          </select>
+        </div>
+        <div>
+          <label for="filter-tag">Tag</label>
+          <input id="filter-tag" type="search" placeholder="Filter by tag" />
+        </div>
+      </section>
+      <p id="notebook-status" role="status">Loading notes…</p>
+      <section id="notes" aria-label="Site notes"></section>
+    </main>
+    <footer>Small observations. A clearer investigation.<span>Made by hicro</span></footer>
+    <script src="sidebar.js"></script>
+  </body>
+</html>

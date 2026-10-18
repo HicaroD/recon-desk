@@ -86,3 +86,18 @@ footer {
   margin-top: 8px;
   color: #66e0bc;
 }
+button {
+  padding: 7px 10px;
+  border: 1px solid #52647e;
+  border-radius: 6px;
+  background: #22344b;
+  color: #ecf1f8;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+button:hover { background: #304760; }
+button:focus-visible { outline: 2px solid #66e0bc; outline-offset: 2px; }
+button:disabled { opacity: 0.65; cursor: default; }
+#open-notebook { margin-top: 12px; }
+#notebook-feedback:empty { display: none; }
