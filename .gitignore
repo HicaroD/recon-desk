@@ -1,2 +1,4 @@
 .opencode
 __pycache__/
+node_modules/
+web-ext-artifacts/

@@ -31,7 +31,8 @@ Requires **Firefox 142+**. Standard Firefox requires a **Mozilla-signed `.xpi`**
 2. With Node.js and npm installed, run from the repository root:
 
    ```sh
-   npm exec --yes --package web-ext -- web-ext build --source-dir extension
+   npm ci
+   npm run build:extension
    ```
 
 3. Sign in to the [Mozilla Add-on Developer Hub](https://addons.mozilla.org/developers/) and choose **Submit a New Add-on** → **On your own** (unlisted/self-distributed).
@@ -98,7 +99,7 @@ Visit `http://127.0.0.1:8765/` in a new tab. Fake credentials should produce a b
 
 ```sh
 npm run check
-npm exec --yes --package web-ext -- web-ext lint --source-dir extension
+npm run lint:extension
 ```
 
 Node's built-in runner covers detection, extension wiring, popup/sidebar behavior, persistence, concurrent writes, stale edits, delayed autosaves after deletion, storage failures, and extension-only notebook messaging.
@@ -116,3 +117,7 @@ python3 tests/notebook_firefox.py
 - **Notebook:** checks draft recovery, safe payload rendering, tags/progress, tab switching mid-edit, Markdown downloads, real popup finding capture, native sidebar opening, and persistence across an extension restart. WebDriver drives the unchanged sidebar document in an extension tab while a fixture stays active; it cannot directly address native sidebar content. Add `--screenshot /absolute/path.png` to capture the native sidebar.
 
 Firefox lifecycle details: BFCache restores use `pageshow` with `persisted: true`, without rerunning content scripts or replaying network responses. After SPA navigation, `sender.url` can still be the original URL; the scanner supplies its captured URL, and the background checks its origin and current tab before accepting results. That raw URL is not persisted.
+
+### Publishing
+
+CI runs tests, syntax checks, and extension lint on pull requests and pushes to `master`. Publishing a stable GitHub release triggers validation, packaging, and submission to Firefox Add-ons. See [the publishing guide](docs/publishing.md) for the one-time Mozilla listing and GitHub secret setup, versioning, and review process.

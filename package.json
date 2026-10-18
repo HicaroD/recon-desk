@@ -2,9 +2,16 @@
   "name": "recondesk",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "ReconDesk is a Firefox recon companion for bug bounty research. Discover passive security leads, capture evidence, and organize site-specific notes as you investigate.",
   "scripts": {
+    "lint:extension": "web-ext lint --source-dir extension",
+    "build:extension": "web-ext build --source-dir extension",
+    "check:release": "node scripts/check-release.cjs",
     "test": "node --test tests/*.test.cjs",
     "check": "npm test && node --check extension/rules.js && node --check extension/content.js && node --check extension/background.js && node --check extension/popup.js && node --check extension/notebook.js && node --check extension/sidebar.js"
+  },
+  "devDependencies": {
+    "web-ext": "10.8.0"
   }
 }

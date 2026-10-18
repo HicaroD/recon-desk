@@ -1,0 +1,60 @@
+name: Submit to Firefox Add-ons
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: amo-publish
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: check
+    # Prereleases remain on GitHub; only stable releases go to the public listing.
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Check release identity and version
+        run: npm run check:release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+      - name: Check Mozilla credentials
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          test -n "$AMO_JWT_ISSUER" || { echo 'Missing AMO_JWT_ISSUER secret'; exit 1; }
+          test -n "$AMO_JWT_SECRET" || { echo 'Missing AMO_JWT_SECRET secret'; exit 1; }
+      - run: npm run build:extension
+      - name: Save unsigned extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: recondesk-${{ github.event.release.tag_name }}-unsigned
+          path: web-ext-artifacts/*.zip
+          if-no-files-found: error
+      - name: Submit listed version to Mozilla
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: npx --no-install web-ext sign --source-dir extension --channel listed --approval-timeout 0
+      - name: Record submission status
+        run: |
+          echo '### Submitted to Firefox Add-ons' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Mozilla accepted the submission. Publication is subject to validation and review; this job does not wait for approval or download a signed XPI.' >> "$GITHUB_STEP_SUMMARY"
