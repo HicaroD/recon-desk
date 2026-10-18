@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { showPopup } = require("../extension/popup.js");
 
 function node() {
+  const listeners = {};
   return {
     textContent: "",
     children: [],
@@ -15,8 +16,39 @@ function node() {
     replaceChildren() {
       this.children = [];
     },
+    addEventListener(type, fn) { listeners[type] = fn; },
+    async emit(type) { await listeners[type]?.(); },
   };
 }
+
+test("popup opens the sidebar from a user action and saves a finding with its captured page context", async () => {
+  const elements = { summary: node(), status: node(), findings: node(), "open-notebook": node(), "notebook-feedback": node() };
+  const doc = { getElementById: id => elements[id], createElement: () => node(),
+    defaultView: { crypto: require("node:crypto").webcrypto, setTimeout() {} } };
+  const finding = { ruleId: "header-csp", title: "No CSP", severity: "low", confidence: "potential",
+    url: "https://example.test", pagePath: "/account", evidence: "Main document response" };
+  const messages = [];
+  let opened = 0;
+  const api = {
+    tabs: { query: async () => [{ id: 8, url: "https://example.test/account?token=fixture" }] },
+    sidebarAction: { open: async () => { opened++; } },
+    runtime: { sendMessage: async message => {
+      messages.push(message);
+      return message.type === "get-scan-state" ? { status: "complete", findings: [finding] } : { note: { id: "saved" } };
+    } },
+  };
+  await showPopup(api, doc);
+  await elements["open-notebook"].emit("click");
+  assert.equal(opened, 1);
+  const save = elements.findings.children[0].children.find(child => child.textContent === "Save finding to note");
+  assert.ok(save, "finding cards should offer a save action");
+  await save.emit("click");
+  const capture = messages.find(message => message.action === "capture");
+  assert.equal(capture.tabId, 8);
+  assert.equal(capture.url, "https://example.test/account?token=fixture");
+  assert.deepEqual(capture.finding, finding);
+  assert.equal(save.textContent, "Saved to notebook");
+});
 
 test("popup presents the active tab findings without injecting evidence as HTML", async () => {
   const elements = { summary: node(), status: node(), findings: node() };

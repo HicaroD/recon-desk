@@ -1,4 +1,6 @@
 function createScannerBackground(api, rules) {
+  const notebook = (typeof ReconNotebook !== "undefined" ? ReconNotebook : require("./notebook.js"))
+    .createNotebook(api.storage.local);
   const states = new Map();
   const queues = new Map();
   const scriptCounts = new Map();
@@ -405,6 +407,24 @@ function createScannerBackground(api, rules) {
     ["blocking"],
   );
   api.runtime.onMessage.addListener((message, sender) => {
+    if (message?.type === "notebook-request") {
+      const trusted = sender.id === api.runtime.id &&
+        ["popup.html", "sidebar.html"].some(path => sender.url === api.runtime.getURL?.(path));
+      if (!trusted) return Promise.resolve({ error: "Notebook access requires an extension page." });
+      const work = async () => {
+        if (message.action !== "capture") return notebook.request(message);
+        return enqueue(message.tabId, async () => {
+          const tab = await api.tabs.get(message.tabId);
+          const state = await load(message.tabId);
+          if (page(tab.url) !== page(message.url) || state.url !== page(message.url))
+            throw Error("The page changed. Reopen the popup before saving this finding.");
+          const finding = state.findings.find(item => JSON.stringify(item) === JSON.stringify(message.finding));
+          if (!finding) throw Error("This finding is no longer available. Refresh the popup.");
+          return notebook.request({ ...message, finding });
+        });
+      };
+      return work().catch(error => ({ error: error.message }));
+    }
     if (message?.type === "get-scan-state") {
       return enqueue(message.tabId, async () => {
         const tab = await api.tabs.get(message.tabId);

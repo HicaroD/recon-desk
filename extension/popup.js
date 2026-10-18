@@ -38,8 +38,19 @@ const explanations = {
     "An authentication token appears in client hydration data. Review its scope and lifetime.",
 };
 const renderedStates = new WeakMap();
+const notebookButtons = new WeakSet();
 
 async function showPopup(api, doc) {
+  const notebookButton = doc.getElementById("open-notebook");
+  if (notebookButton && !notebookButtons.has(notebookButton)) {
+    notebookButtons.add(notebookButton);
+    notebookButton.addEventListener("click", () => {
+      // Call directly inside the click handler: Firefox requires a user gesture.
+      void api.sidebarAction.open().catch(error => {
+        doc.getElementById("notebook-feedback").textContent = `Could not open notebook: ${error.message}`;
+      });
+    });
+  }
   const trace = (event, details = {}) => {
     if (typeof browser !== "undefined")
       console.info(`[Client Watcher popup] ${event}`, details);
@@ -171,6 +182,26 @@ async function showPopup(api, doc) {
       card.appendChild(meta);
       card.appendChild(explanation);
       card.appendChild(evidence);
+      const save = doc.createElement("button");
+      save.type = "button";
+      save.textContent = "Save finding to note";
+      const feedback = doc.createElement("p");
+      feedback.setAttribute?.("role", "status");
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          const result = await api.runtime.sendMessage({ type: "notebook-request", action: "capture",
+            id: doc.defaultView.crypto.randomUUID(), tabId: tab.id, url: tab.url, finding: item });
+          if (!result?.note) throw Error(result?.error || "Notebook unavailable. Reload the extension.");
+          save.textContent = "Saved to notebook";
+          feedback.textContent = "Open notebook to review or edit this note.";
+        } catch (error) {
+          feedback.textContent = error.message;
+          save.disabled = false;
+        }
+      });
+      card.appendChild(save);
+      card.appendChild(feedback);
       list.appendChild(card);
     }
     refresh();

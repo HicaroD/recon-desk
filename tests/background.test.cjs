@@ -63,6 +63,31 @@ function fakeBrowser() {
   };
 }
 
+test("only notebook extension pages can read research or capture a current scanner finding", async () => {
+  const api = fakeBrowser();
+  api.runtime.id = "client-watcher@local.invalid";
+  api.runtime.getURL = path => `moz-extension://notebook-test/${path}`;
+  let url = "https://app.example.test/account?access_token=fixture-token-123";
+  api.tabs.get = async id => ({ id, url });
+  createScannerBackground(api, rules);
+  const ui = { id: api.runtime.id, url: api.runtime.getURL("popup.html") };
+  const request = async (request, sender = ui) =>
+    (await api.runtime.onMessage.emit({ type: "notebook-request", ...request }, sender))[0];
+  const finding = rules.analyzeUrl(url)[0];
+  await api.runtime.onMessage.emit({ type: "findings", findings: [finding] }, { tab: { id: 7 }, frameId: 0, url });
+  const current = (await api.runtime.onMessage.emit({ type: "get-findings", tabId: 7 }, {}))[0][0];
+  const result = await request({ action: "capture", tabId: 7, url, finding: current, id: "captured" });
+  assert.ok(result?.note, "popup should capture a finding through the real background listener");
+  assert.equal(result.note.sourceUrl, "https://app.example.test/account");
+  assert.equal(result.note.snapshot.ruleId, "url-sensitive");
+  const denied = await request({ action: "list", url }, { tab: { id: 7 }, frameId: 0, url, id: api.runtime.id });
+  assert.match(denied.error, /extension page/i);
+  url = "https://app.example.test/next";
+  await api.webNavigation.onBeforeNavigate.emit({ tabId: 7, frameId: 0, url });
+  assert.equal((await request({ action: "list", url })).notes.length, 1);
+  assert.match((await request({ action: "capture", url, tabId: 7, finding: current, id: "stale" })).error, /no longer|changed/i);
+});
+
 test("badge counts deduplicated findings and resets when leaving the site", async () => {
   const api = fakeBrowser();
   createScannerBackground(api, rules);
