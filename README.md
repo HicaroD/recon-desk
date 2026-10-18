@@ -6,6 +6,10 @@ ReconDesk is a Firefox recon companion for bug bounty research. Discover passive
 
 It scans pages you visit, shows a finding count on the toolbar, and keeps findings and notes locally. No validation requests, uploads, or runtime dependencies.
 
+![ReconDesk's Firefox sidebar beside a demo website, showing saved evidence, research notes, tags, and progress.](docs/screenshots/notebook.png)
+
+Keep your investigation beside the website. Screenshots use local fixtures and fictional research data.
+
 ## Install permanently
 
 Requires **Firefox 142+**. Standard Firefox requires a **Mozilla-signed `.xpi`**, even for personal use. A local ZIP or unsigned XPI is not enough; a public add-ons listing is optional.
@@ -36,6 +40,10 @@ See Mozilla's [signing guide](https://extensionworkshop.com/documentation/publis
 
 The popup shows severity, confidence, redacted evidence, page context, and scan coverage. These are **leads to review, not confirmed vulnerabilities**. See [FINDINGS.md](FINDINGS.md) for all 19 rules and sampling limits.
 
+<img src="docs/screenshots/findings.png" alt="ReconDesk popup showing a high-severity demo finding, scan coverage, and the Save finding to note action." width="380" />
+
+Review passive signals and save useful evidence to your notebook.
+
 - **Checked** means sampled, not exhaustive; **partial** means blocked or limited; **not inspected** means unobserved. **No findings** does not mean secure.
 - New documents and reloads clear findings, coverage, and the badge. SPA/fragment changes rescan page-local sources while retaining document headers and external-script observations. Page sampling repeats every 30 seconds; the popup refreshes automatically.
 - Headers and external scripts are inspected as responses arrive. **Reload an already-open page after installation** to capture them; periodic scans cannot replay past traffic. No external script requests means that source can remain uninspected.
@@ -46,6 +54,10 @@ The extension needs cookie, storage, scripting, navigation, request-observation,
 ### Recon notebook
 
 Click **Open notebook** in the popup to open Firefox's sidebar.
+
+<img src="docs/screenshots/note-editor.png" alt="Note editor with a multiline invoice-access test, idor and billing tags, Testing progress, and Draft saved locally status." width="468" />
+
+Capture observations and next steps with page context and draft autosave.
 
 - **Add note / Edit / Delete:** separate cards with multiline text, comma-separated tags, timestamps, and **To investigate / Testing / Done** progress. Filter by tag or progress.
 - **Drafts:** edits autosave; wait for **Draft saved locally** to confirm storage finished. **Save note** marks the card ready; **Close editor** keeps its saved draft available through **Edit**.
