@@ -8,8 +8,8 @@ assert.equal(tag, `v${manifest.version}`, 'Release tag must match the manifest v
 assert.equal(pkg.version, manifest.version, 'Package and manifest versions must match');
 
 const id = manifest.browser_specific_settings?.gecko?.id;
-assert.ok(id && id !== 'client-watcher@local.invalid',
-  'Choose a permanent gecko.id in extension/manifest.json before publishing');
+assert.equal(id, 'client-watcher@local.invalid',
+  'gecko.id must match the published ReconDesk listing to preserve updates');
 assert.ok(manifest.browser_specific_settings.gecko.strict_min_version,
   'Declare the minimum supported Firefox version');
 

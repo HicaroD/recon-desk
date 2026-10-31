@@ -4,8 +4,8 @@ GitHub Actions submits stable GitHub releases to the public Firefox Add-ons (AMO
 
 ## One-time setup
 
-1. Choose a permanent `browser_specific_settings.gecko.id` in `extension/manifest.json`. The current `client-watcher@local.invalid` is a development ID and the publish workflow rejects it. Keep the permanent ID for every subsequent release.
-2. Update any development-ID references in the Firefox browser tests when changing the ID. Export existing research before switching IDs: Firefox treats the new identity as a separate extension.
+1. Keep `browser_specific_settings.gecko.id` in `extension/manifest.json` set to `client-watcher@local.invalid`. This is the permanent ID registered to the [published ReconDesk listing](https://addons.mozilla.org/firefox/addon/recondesk/), despite its development-style name.
+2. Keep that ID for every subsequent release and in the Firefox browser tests. Firefox treats a different ID as a separate extension, breaking the existing update path and access to stored research.
 3. Choose a license, prepare privacy and permission explanations, and create the first listing through the [Mozilla Developer Hub](https://addons.mozilla.org/developers/). Choose **On this site** for public distribution. Complete the description, screenshots, support information, and reviewer instructions.
 4. Generate credentials on [Mozilla's API credentials page](https://addons.mozilla.org/developers/addon/api/key/).
 5. In this GitHub repository, open **Settings → Secrets and variables → Actions → New repository secret** and add:
@@ -26,7 +26,7 @@ The workflow needs an existing AMO listing under that ID, accessible to the cred
    npm run check:release -- v0.1.1
    ```
 
-   Replace `v0.1.1` with the intended tag. The release check requires an exact `v<manifest version>` match, matching package version, and a non-development add-on ID.
+   Replace `v0.1.1` with the intended tag. The release check requires an exact `v<manifest version>` match, matching package version, and the published ReconDesk add-on ID.
 3. Run the existing Firefox browser tests documented in the README. CI currently runs Node tests, JavaScript syntax checks, and extension lint; it does not run the Selenium browser suites.
 4. Merge the release changes into `master` and confirm CI succeeds.
 5. Create and publish a GitHub release with the matching tag, targeting that commit. Draft releases do not trigger submission. Releases marked as prereleases run checks but skip AMO submission.
